@@ -3,13 +3,17 @@
 The public surface grows one build phase at a time. Phase 1 is the process
 layer: how a host describes an agent, and one agent-proxy subprocess driven
 correctly. Phase 2 adds the conversation on top of it — `AgentHost`, `Session`
-and the transcript stores. The router and the browser half arrive in phases 3
-and 4.
+and the transcript stores. Phase 3 adds `R2D2Box`, the mountable router that
+puts a browser in front of all of it. The browser half arrives in Phase 4.
+
+A host application needs `R2D2Box` and `AgentConfig`, plus a store; everything
+else here is for a caller reaching below the router on purpose.
 """
 
 from .config import DEFAULT_PROXY_BIN, AgentConfig, build_argv
 from .host import AgentHost
 from .proxy import STREAM_LIMIT, AgentProxy, ProxyStartError
+from .router import DEFAULT_CLIENT_QUEUE_LIMIT, R2D2Box
 from .session import Session, SubmitRejected, Subscriber
 from .store import (
     FileTranscriptStore,
@@ -23,10 +27,12 @@ __all__ = [
     "AgentConfig",
     "AgentHost",
     "AgentProxy",
+    "DEFAULT_CLIENT_QUEUE_LIMIT",
     "DEFAULT_PROXY_BIN",
     "FileTranscriptStore",
     "MemoryTranscriptStore",
     "ProxyStartError",
+    "R2D2Box",
     "STREAM_LIMIT",
     "Session",
     "SessionInfo",

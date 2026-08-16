@@ -13,6 +13,9 @@ it one message at a time and assert on what the session did with each.
 By default a `submit` is acknowledged automatically with a freshly minted turn
 id, since almost every test wants that; `auto_ack=False` leaves the ack to the
 test, which is how a rejected submit and a lost ack are exercised.
+
+`FakeSpawner`, `FakeHost` and `RecordingSubscriber` sit alongside it, so a test
+can build a session, a whole registry or a stand-in client on the same fake.
 """
 
 from __future__ import annotations
@@ -20,6 +23,8 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from typing import Any
+
+from r2d2box import AgentConfig, AgentHost
 
 
 class FakeProxy:
@@ -231,6 +236,39 @@ class FakeSpawner:
     def latest(self) -> FakeProxy:
         """The proxy handed out by the most recent successful spawn."""
         return self.proxies[-1]
+
+
+class FakeHost(AgentHost):
+    """An `AgentHost` that spawns `FakeProxy` objects instead of processes.
+
+    The registry's own seam, `start_proxy`, is the only thing overridden, so a
+    whole host — and above it a whole router — runs with no `agent-proxy` on
+    the machine. `spawns` records `(topic, session, resume)` for every start,
+    and `proxies` maps `(topic, session)` to the most recent one, which is how
+    a test reaches in to emit messages.
+
+    `auto_ack` is handed to every proxy this host mints. It has to be set
+    before the submit rather than on the proxy afterwards: a spawn and the
+    submit that caused it happen in one step, so by the time a test can see
+    the proxy the ack has already been sent.
+    """
+
+    def __init__(self, *args, **kwargs) -> None:
+        if not args and "agent_config" not in kwargs:
+            args = (lambda topic, name: AgentConfig(append_system_prompt=f"about {topic}"),)
+        self.auto_ack = kwargs.pop("auto_ack", True)
+        super().__init__(*args, **kwargs)
+        self.spawns: list[tuple[str, str, str | None]] = []
+        self.proxies: dict[tuple[str, str], FakeProxy] = {}
+        self._minted = 0
+
+    async def start_proxy(self, config: AgentConfig, resume: str | None, tag: str) -> FakeProxy:
+        topic, name = tag.split("/", 1)
+        self.spawns.append((topic, name, resume))
+        self._minted += 1
+        proxy = FakeProxy(resume or f"claude-{self._minted}", auto_ack=self.auto_ack)
+        self.proxies[(topic, name)] = proxy
+        return proxy
 
 
 class RecordingSubscriber:

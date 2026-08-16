@@ -255,7 +255,7 @@ class Session:
         async with self._lock:
             return {
                 "type": "status",
-                **self._envelope(),
+                **self._position(),
                 "turn_active": self.turn_active,
                 "turn_ids": sorted(self._open_turns),
                 "task_ids": sorted(self._task_ids),
@@ -276,7 +276,7 @@ class Session:
         """
         running = sorted(self._open_turns.values(), key=lambda turn: turn.started_at)
         return {
-            **self._envelope(),
+            **self._position(),
             "turns": [turn.to_dict() for turn in (*stored, *running)],
             "turn_active": self.turn_active,
             "task_ids": sorted(self._task_ids),
@@ -405,12 +405,25 @@ class Session:
         return {**forwarded, **self._envelope()}
 
     def _envelope(self) -> dict[str, Any]:
-        """The `topic`, `session` and next `seq` for one server→client message.
+        """The `topic`, `session` and next `seq` for one message sent to every client.
 
-        Every call consumes a sequence number, so this runs once per message
-        actually sent — a gap in `seq` is a message a client lost.
+        Every call consumes a sequence number, so this runs once per broadcast
+        and a gap in `seq` is a message a client lost. Only `_broadcast_locked`
+        should carry one; a message going to a single client uses `_position`
+        instead, which is what keeps that promise true.
         """
         self._seq += 1
+        return {"topic": self.topic, "session": self.name, "seq": self._seq}
+
+    def _position(self) -> dict[str, Any]:
+        """The `topic`, `session` and current `seq` for a message to one client.
+
+        `attached` and `status` answer one client's question, so numbering them
+        as if they were part of the stream would put a gap in every other
+        client's sequence — and one in this client's too, the moment a second
+        tab attaches. The `seq` they carry is the last broadcast the state they
+        describe includes, so the next message a client sees is `seq + 1`.
+        """
         return {"topic": self.topic, "session": self.name, "seq": self._seq}
 
     def _record(self, message: dict[str, Any]) -> None:

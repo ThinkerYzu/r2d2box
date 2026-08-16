@@ -111,6 +111,6 @@ async def test_both_attached_clients_see_a_real_turn(live_host):
         text = "".join(m.get("text", "") for m in subscriber.of_type("text"))
         assert "PONG" in text.upper()
 
-    # Each `attached` takes a seq of its own, since each went to one client.
-    # Everything after them is the shared stream, so the numbering matches.
+    # `seq` numbers the broadcasts and nothing else, so two clients that
+    # attached at different moments still read the same numbers off the turn.
     assert [m["seq"] for m in first.messages[1:]] == [m["seq"] for m in second.messages[1:]]

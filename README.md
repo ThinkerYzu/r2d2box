@@ -11,23 +11,36 @@ WebSocket that carries the message stream, the transcript store, and the
 JavaScript that renders messages, tool calls, and the prompt input into a `div`
 the page provides.
 
-**Status:** Phase 2 of 5 — the server half works, without HTTP. `AgentHost`
-runs conversations under a topic key, each with one agent-proxy process behind
-it, resumes a conversation whose process has died, and evicts idle ones. What
-is missing is a way for a browser to reach it: no router, no WebSocket, no
-front-end.
+**Status:** Phase 3 of 5 — the server half is complete. An application mounts
+the router and gets a WebSocket that two tabs can share, session REST for its
+own furniture, and a URL for the front-end. What is missing is that front-end:
+today's only client is a test that speaks the protocol by hand.
 
 ```python
 from pathlib import Path
 
-from r2d2box import AgentConfig, AgentHost, FileTranscriptStore
+from fastapi import FastAPI
+from r2d2box import AgentConfig, FileTranscriptStore, R2D2Box
 
-host = AgentHost(
+box = R2D2Box(
     lambda topic, session: AgentConfig(append_system_prompt=f"about {topic}"),
     store=FileTranscriptStore(Path.home() / ".myapp/chat"),
 )
 
-session = await host.session("bug-1992198", "s1")
+app = FastAPI(lifespan=box.lifespan)
+app.include_router(box.router, prefix="/chat")
+```
+
+That gives the application a WebSocket at `/chat/ws`, session endpoints under
+`/chat/sessions`, and the front-end at `/chat/static`. A client attaches to a
+`(topic, session)` pair and submits prompts; every client attached to the same
+pair sees the same stream.
+
+`box.host` is the `AgentHost` underneath, for a caller that also wants an agent
+outside a request — a cron job, a CLI:
+
+```python
+session = await box.host.session("bug-1992198", "s1")
 await session.attach(my_subscriber)     # anything with `async def send(message)`
 await session.submit("why does it crash?")
 ```
@@ -37,8 +50,8 @@ await session.submit("why does it crash?")
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
-.venv/bin/pytest                             # 132 tests, ~0.7s; needs no `claude`
-R2D2BOX_RUN_LIVE=1 .venv/bin/pytest -m live  # 3 real conversations; needs agent-proxy and claude
+.venv/bin/pytest                             # 166 tests, ~0.9s; needs no `claude`
+R2D2BOX_RUN_LIVE=1 .venv/bin/pytest -m live  # 4 real conversations; needs agent-proxy and claude
 ```
 
 Nothing in the default suite needs `claude`, and each layer is tested without
@@ -46,8 +59,11 @@ the one below it. `tests/scripted_proxy.py` is a real subprocess replaying a
 JSON-lines script, so the read-buffer limit and the shutdown path are the ones
 production uses; `tests/fake_proxy.py` stands in for that subprocess so the
 conversation layer can be driven one message at a time; and
-`AgentHost.start_proxy` is the override point that runs a whole host with no
-`agent-proxy` installed.
+`FakeHost` there overrides `AgentHost.start_proxy` so a whole host — and the
+router above it — runs with no `agent-proxy` installed; and
+`tests/asgi_client.py` drives the mounted app over ASGI in the test's own event
+loop, so the routing and the `WebSocket` object are the production ones with no
+server and no HTTP client dependency.
 
 ## Documentation
 

@@ -14,32 +14,9 @@ import time
 
 import pytest
 
-from r2d2box import AgentConfig, AgentHost, MemoryTranscriptStore
+from r2d2box import AgentConfig, MemoryTranscriptStore
 
-from fake_proxy import FakeProxy
-
-
-class FakeHost(AgentHost):
-    """An `AgentHost` that spawns `FakeProxy` objects instead of processes.
-
-    `spawns` records `(topic, session, resume)` for every start, and
-    `proxies` maps `(topic, session)` to the most recent one, which is how a
-    test reaches in to emit messages.
-    """
-
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-        self.spawns: list[tuple[str, str, str | None]] = []
-        self.proxies: dict[tuple[str, str], FakeProxy] = {}
-        self._minted = 0
-
-    async def start_proxy(self, config: AgentConfig, resume: str | None, tag: str) -> FakeProxy:
-        topic, name = tag.split("/", 1)
-        self.spawns.append((topic, name, resume))
-        self._minted += 1
-        proxy = FakeProxy(resume or f"claude-{self._minted}")
-        self.proxies[(topic, name)] = proxy
-        return proxy
+from fake_proxy import FakeHost
 
 
 @pytest.fixture
