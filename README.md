@@ -148,12 +148,12 @@ if `node` is missing.
 Python API, the JavaScript API, the WebSocket messages, what happens when
 things go wrong, and what migrating an existing app involves.
 
-Everything else is *why* it is shaped this way, and lives in a separate
-docforge that is not published with the code — a spec (the problem, the
-requirements, and eight decisions), a design (the topic/session architecture
-and eleven more decisions), an implementation guide (file layout and the five
-build phases), a testing guide (the tiers and the stand-in seams), and one log
-per build session. `API.md` is written so you never need them.
+Beyond it, the reasoning lives in the module docstrings rather than in a
+separate design document. Each one opens with what its module is for and then
+names the two or three things about it that are less obvious than they look —
+`session.py` on why `attach` sends under the lock, `proxy.py` on the 16 MiB
+read buffer, `router.py` on why a slow client is dropped rather than buffered.
+Nearly all of them exist because an earlier implementation got it wrong.
 
 ## License
 

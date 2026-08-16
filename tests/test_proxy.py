@@ -44,7 +44,7 @@ async def test_one_turn_arrives_in_order(start_scripted):
 
 
 async def test_envelope_fields_pass_through_untouched(start_scripted):
-    """Decision 1: messages are forwarded, not re-encoded — `seq` and `turn` survive."""
+    """messages are forwarded, not re-encoded — `seq` and `turn` survive."""
     proxy = await start_scripted("one-turn.jsonl")
     await proxy.submit("what host is this?", ref="c-1")
     messages = await collect(proxy)

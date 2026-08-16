@@ -54,7 +54,7 @@ _log = logging.getLogger(__name__)
 # enough that a browser that has stopped reading is noticed within one turn.
 DEFAULT_CLIENT_QUEUE_LIMIT = 512
 
-# Where the front-end lives inside the installed package (SPEC D8): the chat
+# Where the front-end lives inside the installed package: the chat
 # box, its stylesheet, and the vendored `marked` and DOMPurify beside them.
 _PACKAGE_STATIC_DIR = Path(__file__).parent / "static"
 
@@ -140,9 +140,8 @@ class _ClientConnection:
 
         The reader and the writer run as two tasks because they block on
         different things — the socket and the queue — and either ending means
-        the connection is over. Detaching in the exit path is what DESIGN
-        Decision 8 asks of a client that leaves mid-turn: the subscription
-        ends, the turn does not.
+        the connection is over. Detaching in the exit path is what a client
+        leaving mid-turn needs: the subscription ends, the turn does not.
         """
         reader = asyncio.create_task(self._read_loop(), name="r2d2box-ws-reader")
         writer = asyncio.create_task(self._write_loop(), name="r2d2box-ws-writer")
@@ -256,10 +255,9 @@ class _ClientConnection:
         """Run a turn for this client's text, and let the broadcast report it.
 
         Nothing is sent back on success: the turn is acknowledged by the
-        `turn_start` every attached client receives (DESIGN § WebSocket
-        protocol), so the submitting tab and the others learn about it the same
-        way. A refusal is this client's business alone and comes back as an
-        error.
+        `turn_start` every attached client receives, so the submitting tab and
+        the others learn about it the same way. A refusal is this client's
+        business alone and comes back as an error.
         """
         session = self._session
         if session is None:
@@ -410,7 +408,7 @@ class R2D2Box:
     def _add_routes(self) -> None:
         """Register the WebSocket and the session REST endpoints on `self.router`.
 
-        The REST endpoints are the host's own furniture (DESIGN Decision 3) —
+        The REST endpoints are the host's own furniture —
         a session picker, a close button — and each is one `AgentHost` call.
         `topic` and `session` are path segments, so a host whose topic keys can
         contain a slash should reach `AgentHost` directly rather than through

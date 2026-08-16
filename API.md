@@ -1,12 +1,12 @@
 # r2d2box API
 
 Reference for an application embedding r2d2box. It covers the Python API, the
-JavaScript API, the WebSocket messages between them, and what a bzdash or
-agent-desktop-env maintainer has to replace to migrate.
+JavaScript API, the WebSocket messages between them, and what an app with its
+own agent chat has to replace to migrate onto this one.
 
-A separate docforge — a spec, a design, an implementation guide and a testing
-guide, not published with the code — explains *why* each of these is the way it
-is. Nothing here requires reading them.
+Where something here reads as arbitrary, the module docstring for it carries
+the reasoning — most of this library's rules exist because an earlier
+implementation got them wrong.
 
 **Contents:** [Install](#install) · [Quick start](#quick-start) ·
 [Python API](#python-api) · [JavaScript API](#javascript-api) ·
@@ -95,10 +95,10 @@ A **topic** is your key string for the thing being talked about. Under it sit
 decide what a topic means; r2d2box only uses it to scope session names and
 transcripts.
 
-| App | A topic is | Sessions under it |
+| An app that | A topic is | Sessions under it |
 |---|---|---|
-| bzdash | one bug (`bug-1992198`) | the conversations held about that bug |
-| agent-desktop-env | one project | the entries in its session picker |
+| assists on one bug at a time | one bug (`bug-1992198`) | the conversations held about that bug |
+| sits beside a document viewer | one project | the entries in its session picker |
 
 Every client attached to the same `(topic, session)` sees the same stream. Two
 browser tabs on one conversation are two views of it, not two conversations —
@@ -165,10 +165,10 @@ async def agent_config(topic: str, session: str) -> AgentConfig:
     return AgentConfig(
         cwd=Path("/home/dev/project"),
         append_system_prompt=await summarize_bug(bug_id),
-        allowed_tools=["mcp__bzdash__worklog_append", "mcp__bzdash__bug_metadata"],
-        mcp_config={"mcpServers": {"bzdash": {
+        allowed_tools=["mcp__notes__worklog_append", "mcp__notes__item_metadata"],
+        mcp_config={"mcpServers": {"notes": {
             "command": sys.executable,
-            "args": ["-m", "bzdash.mcp_server", "--bug-id", str(bug_id)],
+            "args": ["-m", "myapp.mcp_server", "--bug-id", str(bug_id)],
         }}},
     )
 ```
@@ -368,9 +368,10 @@ cross-origin host passes. Otherwise the scheme and host come from the page.
 | `box.attach(topic, session)` | switch conversations in place; omit `session` for a new one |
 | `box.destroy()` | close the socket, stop the timers, empty the element |
 
-`setContext` is agent-desktop-env's selected document text. Whatever you pass
-reaches `build_prompt` as its fourth argument, and is cleared once a submit
-carries it:
+`setContext` is for the text a reader has selected in a document, and anything
+else the next question needs as background. Whatever you pass reaches
+`build_prompt` as its fourth argument, and is cleared once a submit carries
+it:
 
 ```js
 box.setContext({ file: 'DESIGN.md', startLine: 12, selectedText: '…' });
@@ -387,8 +388,8 @@ to unwrap:
 
 ```js
 box.on('tool_result', (message) => {
-  if (message.tool === 'mcp__bzdash__worklog_append' && !message.is_error) {
-    refreshWorklog();                        // bzdash's host-side effect
+  if (message.tool === 'mcp__notes__worklog_append' && !message.is_error) {
+    refreshWorklog();                        // the host's own side of the tool
   }
 });
 
@@ -641,11 +642,13 @@ socket closes; reconnecting is the recovery, and the transcript makes it whole.
 
 ## Migrating an existing app
 
-r2d2box was extracted from bzdash and agent-desktop-env, so both migrations are
-mostly deletion. What follows is the inventory: what to remove, what replaces
-it, and what changes for the user.
+r2d2box was extracted from two applications that had each built this machinery
+separately, so a migration is mostly deletion. What follows is the inventory,
+grouped by the part of your app it touches. Not every row will apply — the two
+originals differed on transport, on how many agents they ran, and on what they
+did to a prompt before sending it.
 
-### Common to both
+### What goes, whatever your app looks like
 
 | Delete | Replaced by |
 |---|---|
@@ -655,63 +658,82 @@ it, and what changes for the user.
 | the transcript file handling and its replay | a `TranscriptStore` and the `attached` message |
 | the chat renderer: Markdown, tool folding, thinking blocks, scroll anchoring, Enter/Shift+Enter | `R2D2Box.mount` |
 
-Both gain three things they did not have: an opening turn for a new
-conversation, a transcript that survives the host process, and fan-out — two
-tabs on one conversation now see one stream.
+You also gain three things a hand-rolled implementation rarely has: an opening
+turn for a new conversation, a transcript that survives the host process, and
+fan-out — two tabs on one conversation see one stream.
 
-### bzdash
-
-| Today | After |
-|---|---|
-| SSE, one POST per turn | the WebSocket at `{prefix}/ws` |
-| the 2-second SSE keepalive, for Firefox's `PruneNoTraffic()` | **delete it** — a WebSocket is not what Firefox reaps |
-| a registry keyed `(bug_id, session_id)` | topic `bug-<id>`; sessions are the library's |
-| the per-bug system prompt read from SQLite | the same read, inside `agent_config` — and now re-read at every spawn |
-| `--mcp-config` mounting `bzdash-mcp-server` for one bug | `AgentConfig.mcp_config`, built in the same callback |
-| the worklog refresh after `worklog_append` | `box.on('tool_result', …)` |
-| the 20-minute sweeper and 4-hour pending cap | `idle_timeout_s=1200`, `pending_evict_cap_s=14400` — the defaults |
-| server-side JSON-lines transcripts | `FileTranscriptStore` |
-| a "Close session" button posting to its own route | `DELETE /sessions/{topic}/{session}` |
-
-Two user-visible changes. The chat panel takes agent-desktop-env's appearance
-(role-labelled blocks, folded tool history, a status indicator at the foot), and
-unowned turns — the ones bzdash drains and never shows — now appear as
-"Background task" blocks.
-
-One silent bug goes away. Today two tabs on one bug each get their own process
-while resuming the same conversation id, so each writes turns the other's
-process will never see. After the migration they are two views of one session.
-
-### agent-desktop-env
+### Transport
 
 | Today | After |
 |---|---|
-| chat multiplexed onto the app's own WebSocket | a second socket, r2d2box's own; keep yours for the document panel and file tree |
-| the `status_query` handshake answering chat and document questions together | only the document half stays yours |
-| displacing a second client with close code 4001 | fan-out; a second tab is a view, not an error |
+| SSE, one request per turn | the WebSocket at `{prefix}/ws` |
+| a keepalive keeping a quiet SSE connection from being reaped | **delete it** — a WebSocket is not what a browser prunes for idleness |
+| chat multiplexed onto a WebSocket you already have | a second socket, r2d2box's own; keep yours for everything else |
+| a handshake answering chat and non-chat questions together | only the non-chat half stays yours |
+
+SSE-per-turn is the one that forces the most change, and the reason is
+structural rather than stylistic: it cannot deliver anything *between* turns,
+which is exactly how unowned turns and background-task completions arrive. An
+app on SSE is usually dropping both without having decided to.
+
+### The agent registry
+
+| Today | After |
+|---|---|
+| a registry keyed by whatever you are talking about | one topic key per thing; sessions under it are the library's |
+| one agent for the whole app | one topic, with sessions for whatever your picker lists |
+| a process per browser tab, each resuming the same conversation id | one session, fanned out — the tabs are views |
+| displacing a second client and closing its socket | fan-out; a second tab is a view, not an error |
+| terminate-on-idle while keeping the session id | the idle sweeper, which does exactly this |
+| a 20-minute idle timeout and a cap for turns still running | `idle_timeout_s=1200`, `pending_evict_cap_s=14400` — the defaults |
+
+The third row is a silent bug worth checking for. Two tabs that each spawn a
+process while resuming one conversation id will each write turns the other's
+process never sees, and nothing surfaces the divergence.
+
+### Configuration and prompts
+
+| Today | After |
+|---|---|
+| a system prompt built per item from your own data | the same read, inside `agent_config` — and now re-read at every spawn |
+| `--mcp-config` mounting your MCP server for one item | `AgentConfig.mcp_config`, built in the same callback |
+| prepending selected text or other context to every prompt | `box.setContext(…)` plus `build_prompt` |
+| a host-side effect after a particular tool succeeds | `box.on('tool_result', …)` |
+
+### The front-end
+
+| Today | After |
+|---|---|
 | `{role: …}` re-encoding of the message stream | forwarded messages with their turn ids intact — switch on `type` |
-| one agent for the whole app | topic per project, sessions per picker entry |
-| prepending the selected document text to every prompt | `box.setContext(…)` plus `build_prompt` |
-| the client-side background-task id set | `task_ids` from `attached` and `status`; **delete the client-side set** |
-| `sessions/*.json` | `FileTranscriptStore`; keep picker titles and timestamps yourself |
-| terminate-on-idle, keeping the session id | the idle sweeper, which does exactly this |
-| the GNOME idle inhibitor held for a turn | still yours — drive it from `box.on('turn_start')` and `box.on('turn_end')` |
+| a client-side set of outstanding background task ids | `task_ids` from `attached` and `status`; **delete the client-side set** |
+| `marked.parse()` output assigned straight to `innerHTML` | sanitized with DOMPurify first, always |
+| your own session picker and close button | still yours, on `GET /sessions/{topic}` and `box.attach` — `demo/index.html` shows the shape |
+| an idle inhibitor or similar held for the length of a turn | still yours — drive it from `box.on('turn_start')` and `box.on('turn_end')` |
 
-The defect that gets fixed: ADE renders `marked.parse()` output straight into
-`innerHTML`. r2d2box sanitizes with DOMPurify first, always.
+### Storage
 
-ADE's own session picker and dialog stay in ADE. They are built on
-`GET /sessions/{topic}` and `box.attach`, and `demo/index.html` shows the shape.
+| Today | After |
+|---|---|
+| server-side JSON-lines transcripts | `FileTranscriptStore`, which is the same shape |
+| one JSON file per session | `FileTranscriptStore`; keep picker titles and timestamps yourself |
+| a close-session button posting to your own route | `DELETE /sessions/{topic}/{session}` |
+
+### What your users will notice
+
+Two changes are visible rather than internal. The panel takes r2d2box's
+appearance — role-labelled blocks, folded tool history, a status indicator at
+the foot of the list — so a migration is a visual change even where it is not a
+behavioral one. And turns the agent starts on its own appear as "Background
+task" blocks; an app that drained them silently starts showing them.
 
 ---
 
 ## See also
 
-In this repository: [README.md](README.md) for the shortest path to a running
-box, `demo/` for a whole host application in 89 lines, and the module
-docstrings, which carry the reasoning for anything here that reads as
-arbitrary.
+[README.md](README.md) is the shortest path to a running box, `demo/` is a
+whole host application in 89 lines, and the module docstrings carry the
+reasoning for anything here that reads as arbitrary.
 
-Outside it, and not published with the code: agent-proxy's own `API.md`, which
-documents the message types r2d2box forwards and is fixed input to all of this;
-and the docforge's spec, design, implementation guide and testing guide.
+The one document outside this repository that matters is agent-proxy's own
+`API.md`. It defines the message types r2d2box forwards, and is fixed input to
+everything above.

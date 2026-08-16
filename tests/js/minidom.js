@@ -11,7 +11,7 @@
 // reads — and refuses to guess at anything else. Two deliberate limits:
 //
 //   * `innerHTML` is stored, never parsed. The box writes it in exactly one
-//     place, sanitized (DESIGN Decision 10), and never reads structure back
+//     place, sanitized, and never reads structure back
 //     out of it, so a test asserts on the string that was written.
 //   * `querySelector` takes simple selectors only: a tag, a `.class`, or the
 //     two joined, optionally separated by spaces for descendants.

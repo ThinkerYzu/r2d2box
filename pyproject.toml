@@ -24,7 +24,7 @@ dev = [
 [tool.setuptools.packages.find]
 where = ["src"]
 
-# The browser half ships inside the package (SPEC D8) — the mounted router
+# The browser half ships inside the package — the mounted router
 # serves it, so a host installs one dependency and copies no files.
 [tool.setuptools.package-data]
 r2d2box = ["static/*.js", "static/*.css", "static/vendor/*.js"]

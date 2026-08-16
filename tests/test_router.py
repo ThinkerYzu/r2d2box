@@ -84,11 +84,11 @@ async def run_one_turn(
     return proxy
 
 
-# ---- the two cases the implementation guide names as Phase 3's validation ----
+# ---- the two cases the whole transport exists for -------------------------
 
 
 async def test_two_clients_on_one_session_both_see_the_whole_turn(mounted):
-    """DESIGN Decision 2 over the wire: a second tab is a view, not a displacement."""
+    """over the wire: a second tab is a view, not a displacement."""
     app, box = mounted()
 
     async with websocket(app, WS) as first, websocket(app, WS) as second:
@@ -108,7 +108,8 @@ async def test_two_clients_on_one_session_both_see_the_whole_turn(mounted):
             assert turn[0]["text"] == "what host is this?"
 
         # Neither socket was closed on the other's account — the 4001
-        # displacement agent-desktop-env does today has no counterpart here.
+        # displacement one of the original implementations does has no
+        # counterpart here.
         await first.send_json({"type": "status_query"})
         await second.send_json({"type": "status_query"})
         assert (await first.receive_json())["type"] == "status"
@@ -116,7 +117,7 @@ async def test_two_clients_on_one_session_both_see_the_whole_turn(mounted):
 
 
 async def test_a_client_that_leaves_mid_turn_finds_the_turn_finished_on_its_return(mounted):
-    """DESIGN Decision 8: the turn outlives the client, and the transcript proves it."""
+    """The turn outlives the client, and the transcript proves it."""
     app, box = mounted()
 
     async with websocket(app, WS) as leaving:
@@ -158,7 +159,7 @@ async def test_a_client_that_leaves_mid_turn_finds_the_turn_finished_on_its_retu
 
 
 async def test_attach_answers_with_the_transcript_and_the_live_state(mounted):
-    """The `attached` message is DESIGN's late-joiner contract, delivered in one shot."""
+    """The `attached` message is the late-joiner contract, delivered in one shot."""
     app, box = mounted()
 
     async with websocket(app, WS) as connection:
@@ -270,7 +271,7 @@ async def test_a_turn_the_host_submits_itself_reaches_every_browser(mounted):
     """A prompt from the application's own code is a turn like any other.
 
     `box.host` is there so a cron job, a CLI or a REST handler can drive an
-    agent without a browser (DESIGN § Architecture). Nothing about the session
+    agent without a browser. Nothing about the session
     knows which of them submitted, so the clients watching see the same
     `turn_prompt` … `turn_end` they would for a prompt somebody typed.
     """
@@ -292,7 +293,7 @@ async def test_a_turn_the_host_submits_itself_reaches_every_browser(mounted):
 
 
 async def test_a_submits_context_reaches_the_hosts_build_prompt_hook(mounted):
-    """DESIGN Decision 6: the client's ride-along JSON is the hook's fourth argument."""
+    """The client's ride-along JSON is the hook's fourth argument."""
     seen = []
 
     def build_prompt(topic, session, text, context):
@@ -368,7 +369,7 @@ async def test_a_failing_build_prompt_hook_does_not_take_the_connection_down(mou
 
 
 async def test_a_background_task_that_finishes_unwatched_is_reported_on_attach(mounted):
-    """DESIGN Decision 7: the server's task set is authoritative, connected or not."""
+    """The server's task set is authoritative, connected or not."""
     app, box = mounted()
 
     async with websocket(app, WS) as connection:
@@ -552,7 +553,7 @@ async def test_a_client_that_lets_its_queue_fill_is_dropped_with_a_reason(mounte
 
 
 async def test_the_session_endpoints_create_list_and_delete(mounted):
-    """DESIGN Decision 3's three endpoints, each one `AgentHost` call."""
+    """three endpoints, each one `AgentHost` call."""
     app, box = mounted()
 
     created = await request(app, "POST", "/chat/sessions/bug-1")
@@ -585,7 +586,7 @@ async def test_deleting_a_session_clears_what_it_said(mounted):
 
 
 async def test_deleting_a_session_tells_the_tab_still_watching_it(mounted):
-    """The Phase 3 gap, closed: a watcher's socket stays healthy, so it has to be told."""
+    """A watcher's socket stays healthy, so it has to be told the session is gone."""
     app, box = mounted()
 
     async with websocket(app, WS) as watching:

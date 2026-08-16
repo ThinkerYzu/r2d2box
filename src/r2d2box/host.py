@@ -5,9 +5,9 @@ knows nothing about HTTP: the router in `router.py` is built on it, but a cron
 job or a CLI can drive an agent through this class alone, which is the whole
 reason the two are separate modules.
 
-A **topic** is the caller's key string for the thing being talked about — a
-bug, for bzdash; a project, for agent-desktop-env — and sessions live under it
-(SPEC D5). r2d2box gives the topic no meaning of its own beyond scoping session
+A **topic** is the caller's key string for the thing being talked about — one
+bug in a bug tracker, say, or one project in an editor — and sessions live
+under it. r2d2box gives the topic no meaning of its own beyond scoping session
 names and transcripts.
 """
 
@@ -33,9 +33,8 @@ DEFAULT_PENDING_EVICT_CAP_S = 4 * 60 * 60
 DEFAULT_SWEEP_INTERVAL_S = 60
 
 # Returns the `AgentConfig` for one session, and is called at every spawn
-# rather than once at mount (DESIGN Decision 5) — a system prompt built from a
-# live database row is only current at the moment the process starts. May be
-# sync or async.
+# rather than once at mount — a system prompt built from a live database row is
+# only current at the moment the process starts. May be sync or async.
 AgentConfigCallback = Callable[[str, str], AgentConfig | Awaitable[AgentConfig]]
 
 # The turn a conversation opens with, or None for one that starts empty. Called
@@ -144,7 +143,7 @@ class AgentHost:
         The caller holds `_lock`. The spawn closure is what keeps `session.py`
         clear of `AgentConfig`: it resolves the host's per-session
         configuration at the moment a process is started, which is every
-        respawn and not only the first (DESIGN Decision 5).
+        respawn and not only the first.
         """
 
         async def spawn(resume: str | None) -> AgentProxy:
@@ -189,7 +188,7 @@ class AgentHost:
     async def list_sessions(self, topic: str) -> list[SessionInfo]:
         """Every session under `topic`, stored or live, most recently active first.
 
-        This is what a host's session picker lists (DESIGN Decision 3), so it
+        This is what a host's session picker lists, so it
         has to cover both halves: a session whose transcript is on disk but
         whose process was evicted, and a session created a moment ago that has
         not stored a turn yet. A session in both is reported once, with the
@@ -259,9 +258,9 @@ class AgentHost:
         learns it happened.
 
         A session with a turn still running is spared until
-        `pending_evict_cap_s`, because a turn runs on with nobody listening
-        (DESIGN Decision 8) and nothing refreshes `last_active` while it does.
-        The cap is what stops that exemption becoming permanent: a turn whose
+        `pending_evict_cap_s`, because a turn runs on with nobody listening and
+        nothing refreshes `last_active` while it does. The cap is what stops
+        that exemption becoming permanent: a turn whose
         `turn_end` never arrives would otherwise make its session immortal.
         """
         now = time.monotonic()

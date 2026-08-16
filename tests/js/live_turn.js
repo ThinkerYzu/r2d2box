@@ -51,7 +51,7 @@ const poll = setInterval(() => {
   if (!ended && Date.now() < deadline) return;
   clearInterval(poll);
   // With no `marked` or DOMPurify loaded here, the box takes its plain-text
-  // path (DESIGN Decision 10) and the answer is text rather than markup.
+  // path and the answer is text rather than markup.
   const answers = element
     .querySelectorAll('.r2d2-markdown')
     .map((el) => el.innerHTML || el.textContent);

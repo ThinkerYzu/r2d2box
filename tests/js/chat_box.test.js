@@ -5,7 +5,7 @@
 // its logic. The rules being pinned are the four in that file's header — the
 // server owns the composer, `attached` replaces rather than merges, a message
 // with no `seq` belongs to the connection, and markdown is sanitized — plus
-// the rendering both consumer apps already had.
+// the rendering itself.
 
 'use strict';
 
@@ -153,7 +153,7 @@ test('a turn another tab started blocks this tab too', () => {
   const { socket, element } = mountBox();
 
   // Nothing was typed here: this is what fan-out looks like from the tab that
-  // is only watching (DESIGN Decision 2).
+  // is only watching.
   socket.deliver(broadcast(1, { type: 'turn_prompt', turn: turn('t-1'), text: 'from the other tab' }));
   socket.deliver(broadcast(2, { type: 'turn_start', turn: turn('t-1') }));
 
@@ -178,7 +178,7 @@ test('an outstanding background task keeps the composer blocked after the turn e
 });
 
 test('the task set comes from the server and is replaced, never accumulated', () => {
-  // DESIGN Decision 7: a task that finished while this client was away must
+  // a task that finished while this client was away must
   // not leave the input blocked until a reload.
   const { socket, element } = mountBox();
   socket.deliver(broadcast(1, { type: 'task_start', task: { id: 'bash_3' } }));
@@ -358,7 +358,7 @@ test('assistant markdown goes through marked and then DOMPurify', () => {
 });
 
 test('with no marked or DOMPurify the text is shown verbatim, never as HTML', () => {
-  // DESIGN Decision 10 — the line most likely to be "simplified" away.
+  // the line most likely to be "simplified" away.
   const { socket, element } = mountBox();
 
   socket.deliver(broadcast(1, {
@@ -390,11 +390,11 @@ test('handlers receive the message as delivered, with nothing to unwrap', () => 
 
   socket.deliver(broadcast(1, {
     type: 'tool_result', turn: turn('t-1'), tool_use_id: 'tu-1',
-    tool: 'mcp__bzdash__worklog_append', content: 'ok', is_error: false,
+    tool: 'mcp__notes__worklog_append', content: 'ok', is_error: false,
   }));
 
   equal(seen.length, 1, 'the handler ran');
-  equal(seen[0].tool, 'mcp__bzdash__worklog_append', 'and read the field straight off it');
+  equal(seen[0].tool, 'mcp__notes__worklog_append', 'and read the field straight off it');
 });
 
 test('a handler that throws costs its own call and nothing else', () => {

@@ -96,7 +96,7 @@ async def test_a_real_conversation_survives_losing_its_process(live_host):
 
 
 async def test_both_attached_clients_see_a_real_turn(live_host):
-    """DESIGN Decision 2 against a live agent, where the message order is not scripted."""
+    """against a live agent, where the message order is not scripted."""
     session = await live_host.session("live-topic", "s1")
     first, second = RecordingSubscriber(), RecordingSubscriber()
     await session.attach(first)

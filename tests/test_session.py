@@ -93,7 +93,7 @@ async def test_build_prompt_rewrites_what_the_agent_is_asked(fake_session):
 
 
 async def test_build_prompt_may_be_async(fake_session):
-    """DESIGN Decision 6's open question: a host that looks something up mid-assembly."""
+    """open question: a host that looks something up mid-assembly."""
 
     async def build_prompt(topic, name, text, context):
         await asyncio.sleep(0)
@@ -105,7 +105,7 @@ async def test_build_prompt_may_be_async(fake_session):
 
 
 async def test_the_transcript_records_what_was_typed_not_what_was_sent(fake_session):
-    """ADE prepends a document to every prompt; the conversation must not show it."""
+    """A host may prepend a document to every prompt; the transcript must not show it."""
     session, spawner = fake_session(build_prompt=lambda t, n, text, c: f"CONTEXT\n{text}")
     turn_id = await session.submit("what changed?")
     await spawner.latest.run_turn(turn_id)
@@ -156,7 +156,7 @@ async def test_the_proxys_own_seq_is_kept_under_another_name(started_session):
 
 
 async def test_the_message_itself_passes_through_unchanged(started_session):
-    """DESIGN Decision 1: an envelope is added, the vocabulary is not rewritten."""
+    """An envelope is added; the vocabulary is not rewritten."""
     session, proxy, turn_id = await started_session()
     subscriber = RecordingSubscriber()
     await session.attach(subscriber)
@@ -180,7 +180,7 @@ async def test_the_message_itself_passes_through_unchanged(started_session):
 
 
 async def test_every_attached_client_sees_the_same_stream(started_session):
-    """DESIGN Decision 2 — neither app this replaces does this today."""
+    """— neither app this replaces does this today."""
     session, proxy, turn_id = await started_session()
     first, second = RecordingSubscriber(), RecordingSubscriber()
     await session.attach(first)
@@ -269,7 +269,7 @@ async def test_a_message_racing_an_attach_arrives_exactly_once(started_session):
 
 
 async def test_a_turn_in_flight_is_in_the_snapshot_before_it_is_stored(started_session):
-    """Decision 8: a client that reconnects mid-turn finds the turn, not a hole."""
+    """a client that reconnects mid-turn finds the turn, not a hole."""
     session, proxy, turn_id = await started_session()
     await proxy.emit({"type": "turn_start", "turn": turn_ref(turn_id)})
     await proxy.emit({"type": "text", "turn": turn_ref(turn_id), "text": "working"})
@@ -322,7 +322,7 @@ async def test_a_subscriber_that_fails_is_dropped_and_the_stream_carries_on(star
 
 
 async def test_a_turn_runs_to_completion_with_nobody_attached(started_session):
-    """Decision 8 again, from the other side: the transcript does not need an audience."""
+    """from the other side: the transcript does not need an audience."""
     session, proxy, turn_id = await started_session()
     await proxy.run_turn(turn_id, text="nobody heard this")
     await proxy.drain()
@@ -402,7 +402,7 @@ async def test_the_task_set_tracks_task_start_and_task_end(started_session):
 
 
 async def test_a_task_that_ends_with_nobody_connected_still_clears(started_session):
-    """Decision 7 — the bug ADE fixed the hard way: a stale client set blocks the composer."""
+    """The bug one original fixed the hard way: a stale client set blocks the composer."""
     session, proxy, turn_id = await started_session()
     subscriber = RecordingSubscriber()
     await session.attach(subscriber)

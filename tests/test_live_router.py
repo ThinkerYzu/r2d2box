@@ -58,7 +58,7 @@ async def receive_turn(connection) -> list[dict]:
 
 
 async def test_two_browsers_and_one_live_agent(live_app):
-    """Phase 3's acceptance case with nothing scripted, plus the transcript after it."""
+    """Two browsers on one live agent, nothing scripted, plus the transcript after."""
     app, box = live_app
     created = await request(app, "POST", "/chat/sessions/live-topic")
     name = created.json()["session"]

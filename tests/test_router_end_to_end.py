@@ -1,4 +1,4 @@
-"""Phase 3's validation, with a real subprocess under the real router.
+"""The transport with a real subprocess under the real router.
 
 `test_router.py` proves the transport's logic against `FakeHost`. These run the
 whole stack — a mounted FastAPI app, a WebSocket, a session, `build_argv` and
@@ -71,7 +71,7 @@ async def receive_turn(connection, expected: list[str]) -> list[dict]:
 
 
 async def test_two_websocket_clients_receive_one_turn_from_one_process(scripted_app):
-    """The Phase 3 acceptance case: one submit, one process, two clients, one stream."""
+    """One submit, one process, two clients, one stream."""
     app, box = scripted_app("one-turn.jsonl")
 
     async with websocket(app, WS) as first, websocket(app, WS) as second:
@@ -87,7 +87,7 @@ async def test_two_websocket_clients_receive_one_turn_from_one_process(scripted_
             messages = await receive_turn(connection, A_WHOLE_TURN_LIVE)
             assert {message["turn"]["id"] for message in messages} == {"t-1"}
             assert messages[4]["content"] == "r2d2"
-            # DESIGN Decision 1: agent-proxy's own numbering is preserved
+            # agent-proxy's own numbering is preserved
             # beside r2d2box's rather than overwritten by it. r2d2box's counts
             # broadcasts and nothing else, so both clients see the same
             # unbroken run however many of them attached first — including the

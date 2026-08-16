@@ -4,18 +4,17 @@
 //       endpoint: '/chat', topic: 'bug-1992198', session: 's1',
 //     });
 //
-// The box draws the conversation and nothing else (DESIGN Decision 3). Session
-// pickers, close buttons and panel headers are the host's, built on the same
-// router's REST endpoints.
+// The box draws the conversation and nothing else. Session pickers, close
+// buttons and panel headers are the host's, built on the same router's REST
+// endpoints.
 //
 // Four things here are less obvious than they look, and each is a bug one of
-// the two apps this library replaces already shipped:
+// the two applications this library was extracted from already shipped:
 //
 // **The server owns the composer's disabled state.** `turn_active` and
-// `task_ids` arrive from the session (DESIGN Decisions 2 and 7) and are
-// replaced, never accumulated. A turn another tab started disables this tab's
-// input, and a task that finished while the socket was down cannot leave the
-// input stuck.
+// `task_ids` arrive from the session and are replaced, never accumulated. A
+// turn another tab started disables this tab's input, and a task that finished
+// while the socket was down cannot leave the input stuck.
 //
 // **An `attached` message is a reset point, not an update.** The transcript in
 // it is authoritative and `seq` may have restarted, so it replaces what is on
@@ -26,9 +25,9 @@
 // into a transcript every tab shares.
 //
 // **Markdown is sanitized before it reaches innerHTML, always.** `marked` then
-// DOMPurify, and plain text if either is missing (Decision 10). This is the
-// one thing not inherited from agent-desktop-env's renderer, and the line most
-// likely to be "simplified" away by someone comparing against it.
+// DOMPurify, and plain text if either is missing. It is the one line most
+// likely to be "simplified" away, because the renderer this one is modelled on
+// did not have it.
 
 (function (root, factory) {
   var api = factory();
@@ -57,7 +56,8 @@
   // How often a blocked composer asks the session what is still running.
   // Nothing should need this — the stream reports every turn and task — but a
   // message lost to a dropped socket would otherwise leave the input disabled
-  // until a reload, which is a bug agent-desktop-env shipped twice.
+  // until a reload, which is a bug one of the original implementations shipped
+  // twice.
   var STATUS_POLL_MS = 15000;
 
   // ---- small DOM helpers ----------------------------------------------------
@@ -408,7 +408,7 @@
    * Lay out the panel inside the host's element.
    *
    * The element itself becomes the box's root, so a host styles the outside of
-   * it and overrides the custom properties on it (DESIGN Decision 9). Anything
+   * it and overrides the custom properties on it. Anything
    * already inside is cleared: mounting twice into one element should not
    * leave the first box's messages behind it.
    */
@@ -717,7 +717,7 @@
    * Take the session's live state from an `attached` or `status` message.
    *
    * The server holds this state and the client replaces its own with it
-   * (DESIGN Decisions 2 and 7) — never merges, never accumulates. `attached`
+   * — never merges, never accumulates. `attached`
    * reports whether a turn is running but not which, so the open-turn set is
    * derived from the transcript: a turn with no `turn_end` among its events is
    * still going.
@@ -772,7 +772,7 @@
   /**
    * Show a message aimed at this connection rather than at the conversation.
    *
-   * These carry no `seq` (DESIGN § WebSocket protocol) and are the answer to a
+   * These carry no `seq` and are the answer to a
    * refused command, so they are shown and then forgotten — recording one
    * would put this tab's complaint in a transcript every tab shares. A refused
    * `submit` also gets the typed text back, since the box cleared the input
@@ -829,7 +829,7 @@
    * The single authority over the input, so nothing else may touch
    * `disabled` — the three producers (a turn here, a turn in another tab, an
    * outstanding background task) cannot then fight over it. Being busy is a
-   * property of the session and not of this tab (DESIGN Decision 2).
+   * property of the session and not of this tab.
    */
   Box.prototype.refreshComposer = function () {
     var busy = Object.keys(this.openTurns).length > 0;
@@ -875,8 +875,8 @@
    * The stream already reports every turn and task, so this should never
    * change anything. It exists for the case where it does: a `turn_end` or
    * `task_end` lost to a socket that dropped would otherwise leave the input
-   * disabled until the page is reloaded, which is the shape of a bug
-   * agent-desktop-env has fixed twice.
+   * disabled until the page is reloaded, which is the shape of a bug one of
+   * the original implementations has fixed twice.
    */
   Box.prototype.pollStatusWhile = function (blocked) {
     if (!blocked || this.destroyed) {
@@ -904,11 +904,10 @@
   /**
    * Attach arbitrary JSON to the next submit, and show it above the input.
    *
-   * This is agent-desktop-env's selected document text: the host's
-   * `build_prompt` hook receives it as its fourth argument and decides what
-   * the agent is actually asked (DESIGN Decision 6). It is cleared once a
-   * submit carries it, since the next question is rarely about the same
-   * selection.
+   * The text a reader has selected in a document is the motivating case: the
+   * host's `build_prompt` hook receives this as its fourth argument and
+   * decides what the agent is actually asked. It is cleared once a submit
+   * carries it, since the next question is rarely about the same selection.
    */
   Box.prototype.setContext = function (context) {
     this.context = context == null ? null : context;
@@ -951,7 +950,7 @@
    *
    * `type` is any server→client message type, plus `connected` and
    * `disconnected`. Handlers receive the message unwrapped, because there is
-   * nothing to unwrap (DESIGN Decision 1) — a host watching for its own tool
+   * nothing to unwrap — a host watching for its own tool
    * reads `message.tool` and `message.is_error` straight off it.
    */
   Box.prototype.on = function (type, handler) {
@@ -988,7 +987,7 @@
   /**
    * Render Markdown into `el`, sanitized — or as plain text if it cannot be.
    *
-   * DESIGN Decision 10, and the one place in the box that writes `innerHTML`.
+   * The one place in the box that writes `innerHTML`.
    * `marked` and DOMPurify are vendored beside this file but a host includes
    * them itself, so both are checked every time: with either missing the text
    * is shown verbatim rather than trusted to the browser's parser.
@@ -1006,10 +1005,10 @@
   /**
    * Close the socket, stop every timer, and empty the element.
    *
-   * A host calls this when the panel goes away — a closed tab in
-   * agent-desktop-env, a bug page left in bzdash. The conversation itself is
-   * untouched: a turn in flight runs to completion server-side (DESIGN
-   * Decision 8) and is waiting in the transcript for whoever attaches next.
+   * A host calls this when the panel goes away — a closed tab, a page the
+   * reader navigated off. The conversation itself is untouched: a turn in
+   * flight runs to completion server-side and is waiting in the transcript for
+   * whoever attaches next.
    */
   Box.prototype.destroy = function () {
     this.destroyed = true;

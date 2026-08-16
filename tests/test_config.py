@@ -24,15 +24,15 @@ def test_every_field_maps_to_its_flag():
     config = AgentConfig(
         cwd=Path("/home/dev/project"),
         append_system_prompt="You are reviewing bug 1992198.",
-        allowed_tools=["mcp__bzdash__worklog_append", "mcp__bzdash__bug_metadata"],
-        mcp_config={"mcpServers": {"bzdash": {"command": "python3"}}},
+        allowed_tools=["mcp__notes__worklog_append", "mcp__notes__item_metadata"],
+        mcp_config={"mcpServers": {"notes": {"command": "python3"}}},
         extra_args=["--model", "opus"],
     )
     assert build_argv(config) == [
         "agent-proxy",
         "--append-system-prompt", "You are reviewing bug 1992198.",
-        "--allowedTools", "mcp__bzdash__worklog_append", "mcp__bzdash__bug_metadata",
-        "--mcp-config", json.dumps({"mcpServers": {"bzdash": {"command": "python3"}}}),
+        "--allowedTools", "mcp__notes__worklog_append", "mcp__notes__item_metadata",
+        "--mcp-config", json.dumps({"mcpServers": {"notes": {"command": "python3"}}}),
         "--model", "opus",
     ]
 

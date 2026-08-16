@@ -1,13 +1,13 @@
 """One agent-proxy subprocess: spawn it, read its stream, write its commands.
 
 This module knows about pipes, buffer limits and JSON decoding, and nothing
-about turns — that is `session.py`'s half of the seam described in the
-implementation guide under Key Principle. Everything here can be exercised
-against a scripted subprocess with no `claude` installed.
+about turns — that is `session.py`'s half of the seam this library is built on,
+where each layer can be tested without the one below it. Everything here can be
+exercised against a scripted subprocess with no `claude` installed.
 
-Two details live here that bzdash and agent-desktop-env each had to find for
-themselves: the read buffer has to be 16 MiB, and overrunning it costs one
-message rather than the session.
+Two details live here that the two applications this library was extracted from
+each had to find for themselves: the read buffer has to be 16 MiB, and
+overrunning it costs one message rather than the session.
 """
 
 from __future__ import annotations

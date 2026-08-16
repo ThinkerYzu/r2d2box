@@ -1,10 +1,10 @@
 """The topic/session registry: independent conversations, resume, and idle eviction.
 
 Most of this runs against a host whose `start_proxy` hands out a `FakeProxy`,
-so the registry is exercised with no subprocess. The three cases the
-implementation guide names as Phase 2's validation run against the real
-scripted subprocess instead, in `test_host_end_to_end.py` — a registry that
-only ever meets a fake has not been shown to spawn anything.
+so the registry is exercised with no subprocess. The three cases that turn on
+a real process run against the scripted subprocess instead, in
+`test_host_end_to_end.py` — a registry that only ever meets a fake has not been
+shown to spawn anything.
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ async def test_asking_twice_for_a_session_gives_the_same_one(host):
 
 
 async def test_two_sessions_under_one_topic_hold_independent_conversations(host):
-    """Phase 2's first validation, against the fake: two agents, two transcripts."""
+    """Two agents under one topic, with two transcripts, against the fake."""
     await run_one_turn(host, "bug-1", "s1", "question one")
     await run_one_turn(host, "bug-1", "s2", "question two")
 
@@ -81,7 +81,7 @@ async def test_create_session_mints_a_name_nothing_else_is_using(host):
 
 
 async def test_the_config_callback_runs_at_every_spawn_not_once_at_mount():
-    """DESIGN Decision 5: a prompt built from live data is only current at spawn time."""
+    """A prompt built from live data is only current at spawn time."""
     prompts = []
 
     def agent_config(topic, name):
@@ -121,7 +121,7 @@ async def test_the_spawn_tag_names_the_topic_and_session(host):
 
 
 async def test_list_sessions_covers_the_stored_and_the_live(host):
-    """Decision 3 leaves the picker to the host, so this has to answer for both halves."""
+    """The picker is the host's, so this has to answer for both halves."""
     await run_one_turn(host, "bug-1", "stored", "a question")
     await host.session("bug-1", "brand-new")
 
@@ -222,7 +222,7 @@ async def test_a_recently_active_session_is_left_alone(host):
 
 
 async def test_a_session_with_a_turn_in_flight_is_spared(host):
-    """Decision 8: a turn runs on with nobody listening, and refreshes no timestamp."""
+    """a turn runs on with nobody listening, and refreshes no timestamp."""
     host.idle_timeout_s, host.pending_evict_cap_s = 60, 3600
     session = await host.session("bug-1", "s1")
     turn_id = await session.submit("a slow question")
@@ -261,7 +261,7 @@ async def test_an_already_evicted_session_is_not_evicted_again(host):
 
 
 async def test_an_evicted_sessions_next_turn_works(host):
-    """Phase 2's third validation: the client never learns the eviction happened."""
+    """The client never learns the eviction happened."""
     host.idle_timeout_s = 60
     await run_one_turn(host, "bug-1", "s1", "a question")
     session = await host.session("bug-1", "s1")

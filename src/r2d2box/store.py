@@ -1,6 +1,6 @@
 """Where a conversation lives once its turn is over.
 
-SPEC D6 puts transcript storage in the library rather than in each host, so the
+Transcript storage belongs to the library rather than to each host, so the
 `TranscriptStore` interface here is the whole contract: four methods, all
 async, so a host can back them with a database or an HTTP service instead of a
 file. Two implementations ship — `MemoryTranscriptStore` for tests and for a
@@ -48,7 +48,7 @@ class Turn:
     what was asked. It is None for an unowned turn, which nobody submitted.
 
     `events` are the forwarded messages with r2d2box's envelope already on
-    them (DESIGN Decision 1), so replaying a transcript to a client and
+    them, so replaying a transcript to a client and
     watching one live deliver the same objects.
     """
 

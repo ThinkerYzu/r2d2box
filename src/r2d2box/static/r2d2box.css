@@ -1,20 +1,18 @@
 /* r2d2box — the chat box's own styles.
  *
- * Two rules hold this file together (DESIGN Decision 9):
+ * Two rules hold this file together:
  *
  *   1. Every class is prefixed `r2d2-`. There is no shadow root, so the prefix
- *      is the whole of the isolation — and it is deliberate, because both
- *      consumer apps drive DOM-level tests that have to be able to see inside
- *      the panel.
+ *      is the whole of the isolation — and it is deliberate, because a host
+ *      driving DOM-level UI tests has to be able to see inside the panel.
  *   2. Every color, font and gap is a custom property declared on `.r2d2-box`.
  *      A host retheming the panel sets them on its own mount element and
  *      overrides nothing else:
  *
  *          #chat { --r2d2-bg: #fff; --r2d2-fg: #222; }
  *
- * The palette is agent-desktop-env's (SPEC D4), which is where the look comes
- * from — a dark VS-Code-ish panel with a blue user, a green agent and an amber
- * background turn.
+ * The palette is a dark VS-Code-ish panel with a blue user, a green agent and
+ * an amber background turn.
  */
 
 .r2d2-box {

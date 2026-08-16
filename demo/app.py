@@ -9,7 +9,7 @@ conversation — its process, its transcript, its fan-out and its front-end — 
 the library's.
 
 Two things worth copying into a real host. `agent_config` is a callback rather
-than an object (DESIGN Decision 5), so the system prompt is assembled at every
+than an object, so the system prompt is assembled at every
 spawn and never goes stale; and `box.lifespan` is wired into the app, because
 nothing else terminates the agent-proxy processes at shutdown.
 """
@@ -31,10 +31,10 @@ TRANSCRIPTS = Path(os.environ.get("R2D2BOX_DEMO_STORE", DEMO_DIR / "transcripts"
 def agent_config(topic: str, session: str) -> AgentConfig:
     """The agent behind one conversation, resolved every time a process starts.
 
-    A real host builds the system prompt from whatever it knows about the topic
-    — bzdash reads the bug's summary out of SQLite — and mounts its own MCP
-    servers here. The demo has no data of its own, so it only tells the agent
-    what it is being asked about.
+    A real host builds the system prompt from whatever it knows about the
+    topic — reading a bug's summary out of its own database, say — and mounts
+    its own MCP servers here. The demo has no data of its own, so it only tells
+    the agent what it is being asked about.
     """
     return AgentConfig(
         cwd=DEMO_DIR,
@@ -62,9 +62,9 @@ def opening_prompt(topic: str, session: str) -> str | None:
 def build_prompt(topic: str, session: str, text: str, context) -> str:
     """Turn what was typed plus the box's ride-along context into the real prompt.
 
-    DESIGN Decision 6. agent-desktop-env prepends the document text the reader
-    selected; the demo does the same with whatever the page put in `context`,
-    which is the note typed into the box's context field.
+    The motivating case is a host that prepends the document text a reader
+    has selected. The demo does the same with whatever the page put in
+    `context`, which is the note typed into the box's context field.
     """
     if not context:
         return text

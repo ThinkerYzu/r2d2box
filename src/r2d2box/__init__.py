@@ -6,7 +6,7 @@ agent-proxy subprocess driven correctly. `session.py`, `host.py` and `store.py`
 are the conversation — turns, fan-out, topics, resume, transcripts. `router.py`
 is `R2D2Box`, the mountable router that puts a browser in front of all of it.
 The browser half is not Python at all: it ships as `static/r2d2box.js` inside
-this package and is served by that router (SPEC D8).
+this package and is served by that router.
 
 A host application needs `R2D2Box` and `AgentConfig`, plus a store; everything
 else here is for a caller reaching below the router on purpose.

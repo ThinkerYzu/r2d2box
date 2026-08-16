@@ -1,4 +1,4 @@
-# The failure both bzdash and agent-desktop-env hit in the field: one turn
+# The failure both original implementations hit in the field: one turn
 # whose tool_result is a single line larger than the reader's buffer. The turn
 # must survive it — the messages after the oversized line still arrive.
 {"op": "await_submit"}

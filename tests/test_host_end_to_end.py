@@ -1,8 +1,7 @@
-"""Phase 2's validation, against real subprocesses rather than a stand-in.
+"""The registry against real subprocesses rather than a stand-in.
 
 `test_host.py` proves the registry's logic with a fake in place of the process.
-These are the cases the implementation guide names as Phase 2's acceptance, and
-each turns on something a fake cannot show: that a config really becomes an
+These are the cases that a fake cannot show: that a config really becomes an
 argv, that a respawn really carries `--resume`, and that a terminated process
 really lets go.
 
@@ -176,7 +175,7 @@ async def test_an_evicted_sessions_next_turn_works(scripted_host):
 
 
 async def test_the_hosts_config_callback_reaches_the_real_command_line(scripted_host):
-    """DESIGN Decision 5 end to end: what the callback returned is what ran."""
+    """what the callback returned is what ran."""
     host = scripted_host("one-turn.jsonl")
     await run_turn(host, "bug-1992198", "s1", "hello")
 

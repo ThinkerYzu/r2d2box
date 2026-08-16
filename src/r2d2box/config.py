@@ -1,8 +1,8 @@
 """How a host describes an agent, and the agent-proxy argv that description becomes.
 
-`AgentConfig` is what the host's `agent_config(topic, session)` callback returns
-(DESIGN Decision 5), and `build_argv` is the only place in r2d2box that knows
-how its fields map onto agent-proxy's command line.
+`AgentConfig` is what the host's `agent_config(topic, session)` callback
+returns, and `build_argv` is the only place in r2d2box that knows how its
+fields map onto agent-proxy's command line.
 """
 
 from __future__ import annotations

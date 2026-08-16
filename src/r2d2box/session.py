@@ -1,21 +1,22 @@
 """One conversation: its turns, its subscribers, and the process behind it.
 
-This is `proxy.py`'s counterpart across the seam the implementation guide
-describes under Key Principle. Nothing here knows about pipes or JSON lines —
+This is `proxy.py`'s counterpart across the seam this library is built on,
+where each layer can be tested without the one below it. Nothing here knows
+about pipes or JSON lines —
 it is handed an `AgentProxy` by a spawn callback and works in messages. That is
 what lets the whole module be tested against `tests/fake_proxy.py`, with no
 subprocess anywhere.
 
-Three things the two apps this library replaces each got differently, settled
-here in one place:
+Three things the two applications this library was extracted from each got
+differently, settled here in one place:
 
-- **Every attached client sees the same stream** (DESIGN Decision 2). A session
+- **Every attached client sees the same stream**. A session
   has subscribers, not an owner, and `attach` hands over the transcript and the
   live state together so a late joiner misses nothing.
-- **A turn outlives its client** (Decision 8). The read pump runs whether or not
+- **A turn outlives its client**. The read pump runs whether or not
   anyone is listening, so a turn keeps appending to the transcript while the
   browser is away.
-- **The server holds the background-task set** (Decision 7). It is updated from
+- **The server holds the background-task set**. It is updated from
   `task_start`/`task_end` with nobody connected, so a client reconciles against
   it instead of accumulating its own and getting stuck.
 """
@@ -59,10 +60,10 @@ class Subscriber(Protocol):
 # never sees an `AgentConfig` and never calls the host's config callback itself.
 SpawnProxy = Callable[[str | None], Awaitable[AgentProxy]]
 
-# Turns what the person typed into what agent-proxy is given, per DESIGN
-# Decision 6. Called as `build_prompt(topic, session, text, context)`, and may
-# be sync or async — a host that has to look something up while assembling a
-# prompt returns a coroutine.
+# Turns what the person typed into what agent-proxy is given. Called as
+# `build_prompt(topic, session, text, context)`, and may be sync or async — a
+# host that has to look something up while assembling a prompt returns a
+# coroutine.
 BuildPrompt = Callable[..., str | Awaitable[str]]
 
 
@@ -146,9 +147,9 @@ class Session:
     def turn_active(self) -> bool:
         """True while any turn is running — this session's composer is disabled.
 
-        A property of the session rather than of a connection (DESIGN Decision
-        2): a turn one tab starts blocks the composer in every other tab
-        attached to the same conversation.
+        A property of the session rather than of a connection: a turn one tab
+        starts blocks the composer in every other tab attached to the same
+        conversation.
         """
         return bool(self._open_turns)
 
@@ -157,8 +158,8 @@ class Session:
         """How many turns have started and not ended.
 
         `AgentHost.evict_idle` spares a session with any, up to
-        `pending_evict_cap_s`: a turn keeps running with nobody listening
-        (DESIGN Decision 8), and nothing updates `last_active` while it does.
+        `pending_evict_cap_s`: a turn keeps running with nobody listening, and
+        nothing updates `last_active` while it does.
         """
         return len(self._open_turns)
 
@@ -280,10 +281,10 @@ class Session:
         """Subscribe a client and send it the conversation so far, in that order.
 
         The snapshot, the subscription and the `attached` message all happen
-        under one lock, which is what makes DESIGN Decision 2's late joiner
-        safe: snapshot outside it and a message sent in between is lost;
-        subscribe first and send after and the client can see a message before
-        the transcript that message belongs after.
+        under one lock, which is what makes a late joiner safe: snapshot
+        outside it and a message sent in between is lost; subscribe first and
+        send after and the client can see a message before the transcript that
+        message belongs after.
 
         The price is that the read pump waits on this one send, so a transport
         implementing `Subscriber` must queue rather than wait on its peer. A
@@ -394,7 +395,7 @@ class Session:
         """Consume one process's whole message stream, then close out what it left.
 
         Runs as a task for as long as `proxy` lives, so a turn keeps being
-        recorded with no client attached (DESIGN Decision 8). One message
+        recorded with no client attached. One message
         failing to handle costs that message: the loop logs it and reads on,
         because the alternative is a session that goes deaf over a single
         malformed field.
@@ -435,7 +436,7 @@ class Session:
             if kind == "ack":
                 # Claimed, then dropped: the ack exists to bind a ref to a turn
                 # id, and the ref is r2d2box's own bookkeeping rather than
-                # anything a client needs (DESIGN § WebSocket protocol). What
+                # anything a client needs. What
                 # the client does need — what was asked — goes out as
                 # `turn_prompt` from inside here.
                 await self._claim_turn(message)
@@ -451,8 +452,8 @@ class Session:
     def _forward(self, message: dict[str, Any]) -> dict[str, Any]:
         """agent-proxy's message with r2d2box's envelope on it, ready to send.
 
-        DESIGN Decision 1: the message passes through and `topic`, `session`
-        and a per-session `seq` are added. Two of its fields cannot survive
+        The message passes through unchanged and `topic`, `session` and a
+        per-session `seq` are added. Two of its fields cannot survive
         as they are. agent-proxy's `seq` restarts at 1 with every process, so
         it cannot number a conversation that outlives one — it moves to
         `proxy_seq`, where a client can still read what the proxy said. `ref`
@@ -516,9 +517,9 @@ class Session:
         same, and the transcript has to show it — but only a claimed turn gets
         the prompt text, since nothing else knows what was asked.
 
-        The `turn_prompt` broadcast is that text reaching the other tabs. Under
-        Decision 2 they are watching this conversation too, and nothing else in
-        the stream carries the question: `ack` does not leave the server,
+        The `turn_prompt` broadcast is that text reaching the other tabs. They
+        are watching this conversation too, and nothing else in the stream
+        carries the question: `ack` does not leave the server,
         `turn_start` has no room for it, and `Turn.user` is only read by a
         client that attaches later. Without this a second tab would watch an
         answer to a question it never saw. It is not recorded as an event,
@@ -704,10 +705,10 @@ class Session:
         """What agent-proxy is asked, once the host's `build_prompt` hook has had `text`.
 
         With no hook the prompt is `text` unchanged. The hook may be sync or
-        async (DESIGN Decision 6), and whatever it raises reaches `submit`'s
+        async, and whatever it raises reaches `submit`'s
         caller: a hook that fails has left out something the prompt needed —
-        ADE's selected document text, say — and sending the bare text would
-        get a confident answer to a question nobody asked.
+        the document text a reader had selected, say — and sending the bare
+        text would get a confident answer to a question nobody asked.
         """
         if self._build_prompt is None:
             return text
