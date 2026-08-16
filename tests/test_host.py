@@ -16,7 +16,7 @@ import pytest
 
 from r2d2box import AgentConfig, MemoryTranscriptStore
 
-from fake_proxy import FakeHost
+from fake_proxy import FakeHost, FakeProxy, RecordingSubscriber, wait_until
 
 
 @pytest.fixture
@@ -307,3 +307,141 @@ async def test_the_host_works_as_an_async_context_manager():
     async with FakeHost(lambda t, n: AgentConfig()) as host:
         await run_one_turn(host, "bug-1", "s1", "hello")
     assert host.live_sessions() == []
+
+
+# ---- opening a new conversation ----------------------------------------------
+
+
+async def opened_turn(host: FakeHost, topic: str, name: str) -> FakeProxy:
+    """Wait for the opening turn to reach a process, and return that process."""
+    await wait_until(
+        lambda: (topic, name) in host.proxies, what="the opening turn spawning an agent"
+    )
+    proxy = host.proxies[(topic, name)]
+    await wait_until(lambda: proxy.submits, what="the opening prompt reaching agent-proxy")
+    return proxy
+
+
+async def test_a_new_session_opens_with_the_hosts_prompt():
+    """The host gets to say the first thing, whoever asked for the session."""
+    host = FakeHost(opening_prompt=lambda topic, name: f"You are helping with {topic}.")
+    try:
+        await host.session("bug-1", "s1")
+        proxy = await opened_turn(host, "bug-1", "s1")
+
+        assert proxy.submits[0]["text"] == "You are helping with bug-1."
+    finally:
+        await host.close()
+
+
+async def test_a_session_created_by_an_attaching_client_opens_the_same_way():
+    """The path this was built for: nobody named the session, so nobody could prime it."""
+    host = FakeHost(opening_prompt=lambda topic, name: "opening")
+    try:
+        session = await host.create_session("bug-1")
+        proxy = await opened_turn(host, "bug-1", session.name)
+
+        assert proxy.submits[0]["text"] == "opening"
+    finally:
+        await host.close()
+
+
+async def test_a_resuming_conversation_is_not_opened_again():
+    """The stored transcript is what tells a new conversation from a returning one."""
+    store = MemoryTranscriptStore()
+    openings = []
+    host = FakeHost(store=store, opening_prompt=lambda topic, name: openings.append(name) or "hi")
+    try:
+        await run_one_turn(host, "bug-1", "s1", "a question")
+        await host.close_session("bug-1", "s1")          # keeps the transcript
+        openings.clear()
+
+        await host.session("bug-1", "s1")
+        await asyncio.sleep(0.05)
+
+        assert openings == [], "the conversation already has history"
+    finally:
+        await host.close()
+
+
+async def test_an_opening_prompt_may_be_async_and_may_decline():
+    """Returning None is how a host opens some conversations and not others."""
+    async def opening_prompt(topic: str, name: str) -> str | None:
+        return "opening" if topic == "bug-1" else None
+
+    host = FakeHost(opening_prompt=opening_prompt)
+    try:
+        await host.session("bug-2", "s1")
+        await asyncio.sleep(0.05)
+        assert ("bug-2", "s1") not in host.proxies, "no prompt, no process"
+
+        await host.session("bug-1", "s1")
+        proxy = await opened_turn(host, "bug-1", "s1")
+        assert proxy.submits[0]["text"] == "opening"
+    finally:
+        await host.close()
+
+
+async def test_the_opening_prompt_skips_the_build_prompt_hook():
+    """It is the host's own words already; wrapping them in a person's context is wrong."""
+    host = FakeHost(
+        build_prompt=lambda topic, name, text, context: f"[selected text]\n{text}",
+        opening_prompt=lambda topic, name: "opening",
+    )
+    try:
+        await host.session("bug-1", "s1")
+        proxy = await opened_turn(host, "bug-1", "s1")
+
+        assert proxy.submits[0]["text"] == "opening"
+    finally:
+        await host.close()
+
+
+async def test_a_question_typed_straight_away_queues_behind_the_opening_turn():
+    """Otherwise the conversation starts with the answer to the wrong thing."""
+    host = FakeHost(opening_prompt=lambda topic, name: "opening")
+    try:
+        session = await host.session("bug-1", "s1")
+        await session.submit("what is this about?")
+
+        proxy = host.proxies[("bug-1", "s1")]
+        assert [submit["text"] for submit in proxy.submits] == [
+            "opening", "what is this about?",
+        ]
+    finally:
+        await host.close()
+
+
+async def test_an_opening_prompt_that_fails_tells_the_clients_watching():
+    """A briefing the agent never got is worse than one the reader knows failed."""
+    def opening_prompt(topic: str, name: str) -> str:
+        raise RuntimeError("the bug summary could not be read")
+
+    host = FakeHost(opening_prompt=opening_prompt)
+    try:
+        session = await host.session("bug-1", "s1")
+        subscriber = RecordingSubscriber()
+        await session.attach(subscriber)
+        await wait_until(
+            lambda: subscriber.of_type("error"), what="the failure reaching the client"
+        )
+
+        assert "could not be read" in subscriber.of_type("error")[0]["error"]
+    finally:
+        await host.close()
+
+
+async def test_closing_a_session_cancels_an_opening_that_never_finished():
+    """A host shutting down mid-spawn should not be waited on by a turn nobody asked for."""
+    async def opening_prompt(topic: str, name: str) -> str:
+        await asyncio.sleep(30)
+        return "far too late"
+
+    host = FakeHost(opening_prompt=opening_prompt)
+    session = await host.session("bug-1", "s1")
+    await asyncio.sleep(0)
+
+    await host.close()
+
+    assert ("bug-1", "s1") not in host.proxies
+    assert session._opening is None

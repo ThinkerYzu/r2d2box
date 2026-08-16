@@ -38,6 +38,13 @@ DEFAULT_SWEEP_INTERVAL_S = 60
 # sync or async.
 AgentConfigCallback = Callable[[str, str], AgentConfig | Awaitable[AgentConfig]]
 
+# The turn a conversation opens with, or None for one that starts empty. Called
+# as `opening_prompt(topic, session)` once per new session and never for one
+# that is resuming, and may be sync or async. The string is sent to the agent
+# unchanged — it is the host's own words, not a person's question, so
+# `build_prompt` does not see it.
+OpeningPrompt = Callable[[str, str], str | None | Awaitable[str | None]]
+
 
 class AgentHost:
     """Every conversation a host application is running, grouped by topic.
@@ -59,6 +66,7 @@ class AgentHost:
         agent_config: AgentConfigCallback,
         *,
         build_prompt: BuildPrompt | None = None,
+        opening_prompt: OpeningPrompt | None = None,
         store: TranscriptStore | None = None,
         idle_timeout_s: float = DEFAULT_IDLE_TIMEOUT_S,
         pending_evict_cap_s: float = DEFAULT_PENDING_EVICT_CAP_S,
@@ -69,6 +77,7 @@ class AgentHost:
 
         self._agent_config = agent_config
         self._build_prompt = build_prompt
+        self._opening_prompt = opening_prompt
         self._sessions: dict[tuple[str, str], Session] = {}
         self._lock = asyncio.Lock()
         self._sweeper: asyncio.Task[None] | None = None
@@ -79,14 +88,55 @@ class AgentHost:
         Creating one costs nothing and starts no process — that waits for the
         first `submit` — so a client may attach to a session that has never
         run, and a host may hand out a session id before anything is said in
-        it.
+        it. The exception is a host with an `opening_prompt`, which is started
+        here for a conversation that turns out to be new; it runs in the
+        background, so this still returns without waiting for an agent.
         """
         async with self._lock:
             session = self._sessions.get((topic, name))
-            if session is None:
-                session = self._make(topic, name)
-                self._sessions[(topic, name)] = session
-            return session
+            if session is not None:
+                return session
+            session = self._make(topic, name)
+            self._sessions[(topic, name)] = session
+
+        # Outside the lock: the opening reads the store and may submit, and
+        # both would deadlock against a registry lock still held here.
+        if self._opening_prompt is not None:
+            session.open_with(lambda: self._open_session(session))
+        return session
+
+    async def _open_session(self, session: Session) -> None:
+        """Ask the host what this conversation opens with, and submit it.
+
+        Runs once, for a session the registry has just built. Nothing happens
+        for a conversation that is resuming: the stored transcript is what
+        tells the two apart, and it is the only thing that can — a session id
+        looks the same either way, and a `Session` object is rebuilt from
+        scratch for a conversation the host restarted under.
+
+        A failure here is reported to whoever is attached rather than only
+        logged. The reader would otherwise face an agent that quietly never
+        received the briefing the host meant it to have, which is the same
+        failure `_assemble_prompt` refuses to let a broken `build_prompt`
+        cause.
+        """
+        assert self._opening_prompt is not None
+        try:
+            if await self.store.read_turns(session.topic, session.name):
+                return
+            prompt = self._opening_prompt(session.topic, session.name)
+            if inspect.isawaitable(prompt):
+                prompt = await prompt
+            if not prompt:
+                return
+            await session.submit(prompt, assemble=False)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            _log.exception(
+                "session %s/%s: the opening prompt failed", session.topic, session.name
+            )
+            await session.report_error(f"the conversation could not be started: {exc}")
 
     def _make(self, topic: str, name: str) -> Session:
         """Build a `Session` wired to this host's callbacks and store.

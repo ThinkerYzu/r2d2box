@@ -45,6 +45,20 @@ def agent_config(topic: str, session: str) -> AgentConfig:
     )
 
 
+def opening_prompt(topic: str, session: str) -> str | None:
+    """The turn a brand-new conversation starts with, before anyone types.
+
+    Called once per new session and never for one that is resuming, whoever
+    created it — including the chat box attaching with no session named, which
+    is the case a host cannot otherwise get in front of. Off by default here
+    because it spawns an agent the moment a session appears, which is real
+    quota for a demo nobody may type into:
+
+        R2D2BOX_DEMO_OPENING="Introduce yourself in one line." uvicorn …
+    """
+    return os.environ.get("R2D2BOX_DEMO_OPENING") or None
+
+
 def build_prompt(topic: str, session: str, text: str, context) -> str:
     """Turn what was typed plus the box's ride-along context into the real prompt.
 
@@ -60,6 +74,7 @@ def build_prompt(topic: str, session: str, text: str, context) -> str:
 box = R2D2Box(
     agent_config,
     build_prompt=build_prompt,
+    opening_prompt=opening_prompt,
     store=FileTranscriptStore(TRANSCRIPTS),
     idle_timeout_s=10 * 60,
 )

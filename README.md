@@ -60,6 +60,22 @@ shows assistant text verbatim rather than rendering it, because unsanitized
 Markdown never reaches the DOM. Session pickers and close buttons are the
 host's, built on the REST endpoints — see `demo/index.html`.
 
+A conversation can start before anyone types. `opening_prompt` is called once
+for a session that is new — never for one that is resuming — and its result
+becomes that conversation's first turn, whether the session was created by your
+code, by the REST endpoint, or by the chat box attaching with no session named:
+
+```python
+box = R2D2Box(
+    agent_config,
+    opening_prompt=lambda topic, session: f"Here is the bug:\n\n{summarize(topic)}",
+    store=FileTranscriptStore(Path.home() / ".myapp/chat"),
+)
+```
+
+A question typed while that turn is still starting queues behind it, so the
+conversation always begins where you meant it to.
+
 ## Running the demo
 
 ```bash
@@ -85,7 +101,7 @@ await session.submit("why does it crash?")
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
-.venv/bin/pytest                             # 171 tests, ~1s; needs no `claude`
+.venv/bin/pytest                             # 181 tests, ~1s; needs no `claude`
 node tests/js/run.js                         # the front-end's 36, on their own
 R2D2BOX_RUN_LIVE=1 .venv/bin/pytest -m live  # 5 real conversations; needs agent-proxy and claude
 ```

@@ -118,6 +118,7 @@ class Session:
 
         self._proxy: AgentProxy | None = None
         self._pump: asyncio.Task[None] | None = None
+        self._opening: asyncio.Task[None] | None = None
         self._closed = False
 
         self._lock = asyncio.Lock()
@@ -173,14 +174,20 @@ class Session:
 
     # ---- the client-facing operations ---------------------------------------
 
-    async def submit(self, text: str, context: Any = None) -> str:
+    async def submit(self, text: str, context: Any = None, *, assemble: bool = True) -> str:
         """Run one turn for `text` and return the turn id every message of it will carry.
 
         Starts the agent if it is not running, so this is also how an evicted
         session comes back. `context` is the client's ride-along JSON, handed
         to the host's `build_prompt` hook; neither it nor anything the hook
         prepends is recorded as the turn's `user` text, which stays what the
-        person typed.
+        person typed. `assemble=False` skips the hook and sends `text`
+        unchanged, which is what an opening prompt does — it is the host's own
+        words already, and running them through the host's own prompt
+        assembler would wrap them in context meant for a person's question.
+
+        A session with an opening turn queues this behind it, so the
+        conversation always starts where the host meant it to.
 
         Returns once agent-proxy has acknowledged the prompt, which is before
         the turn is typed and long before it runs — so a turn id in hand means
@@ -192,7 +199,8 @@ class Session:
         if self._closed:
             raise ConnectionError(f"session {self.topic}/{self.name} is closed")
 
-        prompt = await self._assemble_prompt(text, context)
+        await self._await_opening()
+        prompt = await self._assemble_prompt(text, context) if assemble else text
         async with self._start_lock:
             proxy = await self._ensure_started()
             self._ref_counter += 1
@@ -216,6 +224,57 @@ class Session:
             ) from exc
         finally:
             self._pending.pop(ref, None)
+
+    def open_with(self, opening: Callable[[], Awaitable[None]]) -> None:
+        """Run `opening` as this session's first act, before any submit it races.
+
+        `AgentHost` calls this once, for a session that has just been created
+        and has nothing stored — which is the only moment "this conversation is
+        new" is knowable. The work runs as a task rather than in the caller,
+        because the caller is usually a client attaching and it should not wait
+        out a process spawn to be told it is attached.
+
+        Ordering is what the task buys and a bare `create_task` would not:
+        `submit` waits for this to finish, so a person who types the instant
+        the panel appears still finds their question behind the opening turn
+        rather than ahead of it.
+        """
+        if self._closed or self._opening is not None:
+            return
+        self._opening = asyncio.create_task(
+            opening(), name=f"r2d2box-opening-{self.topic}-{self.name}"
+        )
+
+    async def _await_opening(self) -> None:
+        """Block until the opening turn has been submitted, if there is one.
+
+        A failed opening is not this caller's problem — whoever started it
+        reports it — so this returns rather than raising. Called from within
+        the opening itself it does nothing, which is what stops the opening's
+        own `submit` waiting for the task making it.
+        """
+        opening = self._opening
+        if opening is None or opening.done() or opening is asyncio.current_task():
+            return
+        try:
+            await asyncio.shield(opening)
+        except asyncio.CancelledError:
+            if not opening.cancelled():
+                raise
+        except Exception:
+            pass
+
+    async def report_error(self, error: str) -> None:
+        """Tell every attached client that something went wrong in this session.
+
+        For failures the conversation itself never sees — an opening turn that
+        could not start, a host's own background work — where the alternative
+        is a panel that silently shows less than it should.
+        """
+        async with self._lock:
+            await self._broadcast_locked(
+                {"type": "error", "error": error, **self._envelope()}
+            )
 
     async def attach(self, subscriber: Subscriber) -> None:
         """Subscribe a client and send it the conversation so far, in that order.
@@ -688,6 +747,7 @@ class Session:
         thing nobody receives.
         """
         self._closed = True
+        await self._cancel_opening()
         await self._stop_process()
         self._fail_pending_submits(ConnectionError("session closed"))
         async with self._lock:
@@ -697,6 +757,17 @@ class Session:
     async def clear(self) -> None:
         """Discard the stored conversation, leaving the session able to start a new one."""
         await self._store.clear(self.topic, self.name)
+
+    async def _cancel_opening(self) -> None:
+        """Stop an opening turn that has not finished starting. Safe with none."""
+        opening, self._opening = self._opening, None
+        if opening is None or opening.done():
+            return
+        opening.cancel()
+        try:
+            await opening
+        except (asyncio.CancelledError, Exception):
+            pass
 
     async def _stop_process(self) -> None:
         """Terminate the process, if there is one, and wait for its read pump to finish.

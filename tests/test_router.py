@@ -243,6 +243,54 @@ async def test_a_submit_is_acknowledged_by_the_turn_start_every_client_sees(moun
     assert started["turn"]["id"] == prompt["turn"]["id"] == "t-1"
 
 
+async def test_a_client_that_names_no_session_gets_one_the_host_has_opened(mounted):
+    """The path an opening prompt exists for: nobody named the session, so nobody could prime it.
+
+    Where the opening arrives is scheduling's business — in the `attached`
+    snapshot if the turn beat the subscribe, on the wire if it did not — so
+    what this pins is that the client learns it exactly once either way.
+    """
+    app, box = mounted(host=FakeHost(opening_prompt=lambda topic, name: "Here is the bug."))
+
+    async with websocket(app, WS) as connection:
+        attached = await attach(connection, session=None)
+        await run_one_turn(box.host, session=attached["session"])
+
+        live = []
+        while not live or live[-1]["type"] != "turn_end":
+            live.append(await connection.receive_json())
+
+    stored = [turn["user"] for turn in attached["turns"]]
+    broadcast = [message["text"] for message in live if message["type"] == "turn_prompt"]
+    assert stored + broadcast == ["Here is the bug."]
+    assert live[-1]["outcome"] == "success"
+
+
+async def test_a_turn_the_host_submits_itself_reaches_every_browser(mounted):
+    """A prompt from the application's own code is a turn like any other.
+
+    `box.host` is there so a cron job, a CLI or a REST handler can drive an
+    agent without a browser (DESIGN § Architecture). Nothing about the session
+    knows which of them submitted, so the clients watching see the same
+    `turn_prompt` … `turn_end` they would for a prompt somebody typed.
+    """
+    app, box = mounted()
+
+    async with websocket(app, WS) as watching:
+        await attach(watching)
+
+        session = await box.host.session("bug-1", "s1")
+        await session.submit("the nightly build finished — anything to worry about?")
+        await run_one_turn(box.host)
+
+        turn = [await watching.receive_json() for _ in range(4)]
+
+    assert [message["type"] for message in turn] == [
+        "turn_prompt", "turn_start", "text", "turn_end",
+    ]
+    assert turn[0]["text"] == "the nightly build finished — anything to worry about?"
+
+
 async def test_a_submits_context_reaches_the_hosts_build_prompt_hook(mounted):
     """DESIGN Decision 6: the client's ride-along JSON is the hook's fourth argument."""
     seen = []
