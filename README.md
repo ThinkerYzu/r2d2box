@@ -11,10 +11,11 @@ WebSocket that carries the message stream, the transcript store, and the
 JavaScript that renders messages, tool calls, and the prompt input into a `div`
 the page provides.
 
-**Status:** Phase 4 of 5 — both halves work. An application mounts the router
-and gets a WebSocket two tabs can share, session REST for its own furniture,
-and the chat box served beside them. `demo/` is a working host; what is left is
-Phase 5's reference documentation.
+**Status:** complete. An application mounts the router and gets a WebSocket two
+tabs can share, session REST for its own furniture, and the chat box served
+beside them. `demo/` is a working host; **[API.md](API.md) is the reference** —
+the Python API, the JavaScript API, the WebSocket messages, and what migrating
+an existing app involves.
 
 ```python
 from pathlib import Path
@@ -122,14 +123,14 @@ if `node` is missing.
 
 ## Documentation
 
-Requirements, architecture, and the plan live in the docforge, not here:
+**[API.md](API.md)** is the one to read if you are embedding r2d2box. Everything
+else is why it is shaped this way, and lives in the docforge:
 
 | Document | What it covers |
 |---|---|
+| [API.md](API.md) | the Python API, the JavaScript API, the WebSocket messages, migration |
 | [SPEC.md](../../proj_docs/r2d2box/SPEC.md) | problem, requirements, constraints, decisions |
-| [DESIGN.md](../../proj_docs/r2d2box/DESIGN.md) | architecture and the host-facing API |
+| [DESIGN.md](../../proj_docs/r2d2box/DESIGN.md) | architecture and the eleven design decisions |
 | [IMPLEMENTATION-GUIDE.md](../../proj_docs/r2d2box/IMPLEMENTATION-GUIDE.md) | file layout, build, phase plan |
+| [TESTING-GUIDE.md](../../proj_docs/r2d2box/TESTING-GUIDE.md) | the test tiers, the seams, the inventory |
 | [HANDOFF.md](../../proj_docs/r2d2box/HANDOFF.md) | current status and next actions |
-
-Reference material for users of the library will live in this repo once there
-is something to document.
