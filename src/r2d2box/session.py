@@ -376,8 +376,10 @@ class Session:
             if kind == "ack":
                 # Claimed, then dropped: the ack exists to bind a ref to a turn
                 # id, and the ref is r2d2box's own bookkeeping rather than
-                # anything a client needs (DESIGN § WebSocket protocol).
-                self._claim_turn(message)
+                # anything a client needs (DESIGN § WebSocket protocol). What
+                # the client does need — what was asked — goes out as
+                # `turn_prompt` from inside here.
+                await self._claim_turn(message)
                 return
             if kind == "error":
                 self._reject_pending_submit(message)
@@ -447,13 +449,22 @@ class Session:
         if turn is not None:
             turn.events.append(message)
 
-    def _claim_turn(self, message: dict[str, Any]) -> None:
-        """Open the turn an `ack` names and hand its id to the submit that earned it.
+    async def _claim_turn(self, message: dict[str, Any]) -> None:
+        """Open the turn an `ack` names, hand its id to the submit, and say what was asked.
 
         The caller holds `_lock`. An `ack` for a ref nobody is waiting on still
         opens the turn — a submit whose caller timed out is running all the
         same, and the transcript has to show it — but only a claimed turn gets
         the prompt text, since nothing else knows what was asked.
+
+        The `turn_prompt` broadcast is that text reaching the other tabs. Under
+        Decision 2 they are watching this conversation too, and nothing else in
+        the stream carries the question: `ack` does not leave the server,
+        `turn_start` has no room for it, and `Turn.user` is only read by a
+        client that attaches later. Without this a second tab would watch an
+        answer to a question it never saw. It is not recorded as an event,
+        because the turn already carries the same text in `user` and a client
+        replaying a transcript would otherwise draw the prompt twice.
         """
         turn_id = _turn_id(message)
         if turn_id is None:
@@ -464,6 +475,15 @@ class Session:
         if pending is None:
             return
         turn.user = pending.text
+        # Broadcast before waking the submitter, so `submit` returning means
+        # every attached client has already been told what was asked. The other
+        # order leaves the caller racing its own prompt onto the wire.
+        await self._broadcast_locked({
+            "type": "turn_prompt",
+            "turn": {"id": turn_id, "kind": turn.kind},
+            "text": pending.text,
+            **self._envelope(),
+        })
         if not pending.future.done():
             pending.future.set_result(turn_id)
 
@@ -653,16 +673,25 @@ class Session:
         await self._stop_process()
 
     async def close(self) -> None:
-        """Shut the session down for good: stop the agent and drop every client.
+        """Shut the session down for good: tell every client, then drop them.
 
         Safe to call twice. `submit` raises `ConnectionError` afterwards. The
         transcript stays in the store, so a later `Session` with the same topic
-        and name picks the conversation up where this one left it.
+        and name picks the conversation up where this one left it — but the
+        `DELETE /sessions` path clears it straight after, which is the case the
+        final `session_closed` broadcast exists for.
+
+        A client that only watches has no other way to learn this happened: its
+        socket stays healthy and its screen keeps showing a conversation the
+        server no longer has. The broadcast goes out before the subscribers are
+        dropped, so it is the last message of the session rather than the first
+        thing nobody receives.
         """
         self._closed = True
         await self._stop_process()
         self._fail_pending_submits(ConnectionError("session closed"))
         async with self._lock:
+            await self._broadcast_locked({"type": "session_closed", **self._envelope()})
             self._subscribers.clear()
 
     async def clear(self) -> None:

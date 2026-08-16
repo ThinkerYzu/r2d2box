@@ -209,7 +209,32 @@ async def test_attach_delivers_the_transcript_before_anything_live(started_sessi
     attached = subscriber.messages[0]
     assert attached["type"] == "attached"
     assert [turn["user"] for turn in attached["turns"]] == ["what host is this?"]
-    assert subscriber.types()[1:] == ["turn_start", "text", "turn_end"]
+    assert subscriber.types()[1:] == ["turn_prompt", "turn_start", "text", "turn_end"]
+
+
+async def test_a_client_that_did_not_submit_still_learns_what_was_asked(started_session):
+    """The other tabs get the question, or they watch an answer to nothing."""
+    session, proxy, _ = await started_session()
+    watcher = RecordingSubscriber()
+    await session.attach(watcher)
+
+    turn_id = await session.submit("and now?")
+
+    prompt = watcher.of_type("turn_prompt")[0]
+    assert prompt["text"] == "and now?"
+    assert prompt["turn"] == turn_ref(turn_id)
+    assert prompt["seq"] == watcher.messages[0]["seq"] + 1
+
+
+async def test_the_prompt_is_broadcast_but_not_recorded_as_an_event(started_session):
+    """`Turn.user` already carries it; recording it too would draw it twice on replay."""
+    session, proxy, turn_id = await started_session()
+    await proxy.run_turn(turn_id, text="r2d2")
+    await proxy.drain()
+
+    stored = (await session.snapshot())["turns"][-1]
+    assert stored["user"] == "what host is this?"
+    assert "turn_prompt" not in [event["type"] for event in stored["events"]]
 
 
 async def test_a_message_racing_an_attach_arrives_exactly_once(started_session):
@@ -568,6 +593,18 @@ async def test_closing_twice_is_safe(fake_session):
     await session.submit("hello")
     await session.close()
     await session.close()
+
+
+async def test_closing_tells_the_clients_watching_before_it_drops_them(started_session):
+    """A tab that only watches has no other way to learn its conversation is gone."""
+    session, _, _ = await started_session()
+    subscriber = RecordingSubscriber()
+    await session.attach(subscriber)
+
+    await session.close()
+
+    assert subscriber.types()[-1] == "session_closed"
+    assert session.subscriber_count == 0
 
 
 async def test_a_closed_session_leaves_its_transcript_behind(fake_session):

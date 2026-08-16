@@ -11,10 +11,10 @@ WebSocket that carries the message stream, the transcript store, and the
 JavaScript that renders messages, tool calls, and the prompt input into a `div`
 the page provides.
 
-**Status:** Phase 3 of 5 — the server half is complete. An application mounts
-the router and gets a WebSocket that two tabs can share, session REST for its
-own furniture, and a URL for the front-end. What is missing is that front-end:
-today's only client is a test that speaks the protocol by hand.
+**Status:** Phase 4 of 5 — both halves work. An application mounts the router
+and gets a WebSocket two tabs can share, session REST for its own furniture,
+and the chat box served beside them. `demo/` is a working host; what is left is
+Phase 5's reference documentation.
 
 ```python
 from pathlib import Path
@@ -36,6 +36,41 @@ That gives the application a WebSocket at `/chat/ws`, session endpoints under
 `(topic, session)` pair and submits prompts; every client attached to the same
 pair sees the same stream.
 
+The page mounts the box into an element of its own and gets the conversation
+drawn into it:
+
+```html
+<link rel="stylesheet" href="/chat/static/r2d2box.css">
+<div id="chat"></div>
+<script src="/chat/static/vendor/marked.min.js"></script>
+<script src="/chat/static/vendor/purify.min.js"></script>
+<script src="/chat/static/r2d2box.js"></script>
+<script>
+  const box = R2D2Box.mount(document.getElementById('chat'), {
+    endpoint: '/chat', topic: 'bug-1992198', session: 's1',
+  });
+  box.on('tool_result', (message) => {
+    if (message.tool === 'mcp__myapp__save' && !message.is_error) refreshPanel();
+  });
+</script>
+```
+
+The two vendored scripts are optional and recommended: without them the box
+shows assistant text verbatim rather than rendering it, because unsanitized
+Markdown never reaches the DOM. Session pickers and close buttons are the
+host's, built on the REST endpoints — see `demo/index.html`.
+
+## Running the demo
+
+```bash
+.venv/bin/pip install 'uvicorn[standard]'
+.venv/bin/python -m uvicorn demo.app:app --port 8790
+# then open http://localhost:8790/
+```
+
+A whole host application in under 100 lines, and the fastest way to see two
+tabs sharing one conversation.
+
 `box.host` is the `AgentHost` underneath, for a caller that also wants an agent
 outside a request — a cron job, a CLI:
 
@@ -50,20 +85,24 @@ await session.submit("why does it crash?")
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
-.venv/bin/pytest                             # 166 tests, ~0.9s; needs no `claude`
-R2D2BOX_RUN_LIVE=1 .venv/bin/pytest -m live  # 4 real conversations; needs agent-proxy and claude
+.venv/bin/pytest                             # 171 tests, ~1s; needs no `claude`
+node tests/js/run.js                         # the front-end's 36, on their own
+R2D2BOX_RUN_LIVE=1 .venv/bin/pytest -m live  # 5 real conversations; needs agent-proxy and claude
 ```
 
 Nothing in the default suite needs `claude`, and each layer is tested without
 the one below it. `tests/scripted_proxy.py` is a real subprocess replaying a
 JSON-lines script, so the read-buffer limit and the shutdown path are the ones
 production uses; `tests/fake_proxy.py` stands in for that subprocess so the
-conversation layer can be driven one message at a time; and
-`FakeHost` there overrides `AgentHost.start_proxy` so a whole host — and the
-router above it — runs with no `agent-proxy` installed; and
-`tests/asgi_client.py` drives the mounted app over ASGI in the test's own event
-loop, so the routing and the `WebSocket` object are the production ones with no
-server and no HTTP client dependency.
+conversation layer can be driven one message at a time; `FakeHost` there
+overrides `AgentHost.start_proxy` so a whole host — and the router above it —
+runs with no `agent-proxy` installed; `tests/asgi_client.py` drives the mounted
+app over ASGI in the test's own event loop, so the routing and the `WebSocket`
+object are the production ones with no server and no HTTP client dependency;
+and `tests/js/minidom.js` is the same idea one layer higher, a DOM small enough
+to run the shipped `r2d2box.js` in under plain `node` — no browser, no jsdom,
+no package manager. `tests/test_chat_box.py` runs those from pytest and skips
+if `node` is missing.
 
 ## Documentation
 

@@ -1,0 +1,384 @@
+/* r2d2box — the chat box's own styles.
+ *
+ * Two rules hold this file together (DESIGN Decision 9):
+ *
+ *   1. Every class is prefixed `r2d2-`. There is no shadow root, so the prefix
+ *      is the whole of the isolation — and it is deliberate, because both
+ *      consumer apps drive DOM-level tests that have to be able to see inside
+ *      the panel.
+ *   2. Every color, font and gap is a custom property declared on `.r2d2-box`.
+ *      A host retheming the panel sets them on its own mount element and
+ *      overrides nothing else:
+ *
+ *          #chat { --r2d2-bg: #fff; --r2d2-fg: #222; }
+ *
+ * The palette is agent-desktop-env's (SPEC D4), which is where the look comes
+ * from — a dark VS-Code-ish panel with a blue user, a green agent and an amber
+ * background turn.
+ */
+
+.r2d2-box {
+  --r2d2-bg: #252526;
+  --r2d2-fg: #e0e0e0;
+  --r2d2-muted: #888;
+  --r2d2-border: #333;
+  --r2d2-surface: #2d2d2d;
+  --r2d2-sunken: #1e1e1e;
+
+  --r2d2-user-bg: #2a3a4a;
+  --r2d2-user-accent: #4fc1ff;
+  --r2d2-agent-accent: #89d185;
+  --r2d2-background-accent: #e5a550;
+  --r2d2-thinking-accent: #e8a84c;
+  --r2d2-tool-bg: #1a2a1a;
+  --r2d2-tool-result-bg: #1a1a2a;
+  --r2d2-thinking-bg: #2a2a1a;
+  --r2d2-error-accent: #f48771;
+  --r2d2-button-bg: #007acc;
+  --r2d2-button-hover: #005a9e;
+
+  --r2d2-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+               "Helvetica Neue", Arial, sans-serif;
+  --r2d2-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --r2d2-font-size: 13px;
+  --r2d2-gap: 8px;
+  --r2d2-radius: 6px;
+
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  font-family: var(--r2d2-font);
+  font-size: var(--r2d2-font-size);
+  color: var(--r2d2-fg);
+  background: var(--r2d2-bg);
+}
+
+.r2d2-box *,
+.r2d2-box *::before,
+.r2d2-box *::after {
+  box-sizing: border-box;
+}
+
+/* ---- the message list ---------------------------------------------------- */
+
+.r2d2-messages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px;
+}
+
+.r2d2-message {
+  margin-bottom: 12px;
+  padding: var(--r2d2-gap) 10px;
+  border-radius: var(--r2d2-radius);
+  background: var(--r2d2-surface);
+}
+
+.r2d2-message-user {
+  background: var(--r2d2-user-bg);
+}
+
+.r2d2-role {
+  margin-bottom: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--r2d2-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.r2d2-message-user .r2d2-role { color: var(--r2d2-user-accent); }
+.r2d2-message-assistant .r2d2-role { color: var(--r2d2-agent-accent); }
+.r2d2-message-background .r2d2-role { color: var(--r2d2-background-accent); }
+
+.r2d2-turn-failed { border-left: 2px solid var(--r2d2-error-accent); }
+
+.r2d2-content {
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Markdown that `marked` produced and DOMPurify passed. It is the one place
+ * the box writes innerHTML, so these rules style tags nothing else here emits.
+ */
+.r2d2-markdown { white-space: normal; }
+.r2d2-markdown p { margin: 0 0 0.5em; }
+.r2d2-markdown p:last-child { margin-bottom: 0; }
+.r2d2-markdown ul,
+.r2d2-markdown ol { margin: 0 0 0.5em 1.2em; }
+.r2d2-markdown hr {
+  border: none;
+  border-top: 1px solid var(--r2d2-border);
+  margin: 0.75em 0;
+}
+.r2d2-markdown code {
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--r2d2-sunken);
+  font-family: var(--r2d2-mono);
+  font-size: 0.9em;
+}
+.r2d2-markdown pre {
+  margin: 0.5em 0;
+  padding: var(--r2d2-gap);
+  border-radius: 4px;
+  background: var(--r2d2-sunken);
+  overflow-x: auto;
+}
+.r2d2-markdown pre code { padding: 0; background: none; }
+.r2d2-markdown table { border-collapse: collapse; }
+.r2d2-markdown th,
+.r2d2-markdown td {
+  padding: 2px 6px;
+  border: 1px solid var(--r2d2-border);
+}
+
+.r2d2-note {
+  margin: 6px 0;
+  color: var(--r2d2-muted);
+  font-size: 12px;
+  font-style: italic;
+}
+
+/* ---- tool and thinking blocks -------------------------------------------- */
+/*
+ * Both are collapsed until clicked: a turn's tool calls are how it got its
+ * answer, which matters when something went wrong and is noise when nothing
+ * did. `r2d2-expanded` on the block is what the click toggles.
+ */
+
+.r2d2-tool {
+  margin: 6px 0;
+  padding: 6px var(--r2d2-gap);
+  border-left: 2px solid var(--r2d2-agent-accent);
+  border-radius: 2px;
+  background: var(--r2d2-tool-bg);
+  font-size: 12px;
+}
+
+.r2d2-tool-error { border-left-color: var(--r2d2-error-accent); }
+
+.r2d2-tool-header {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  cursor: pointer;
+}
+
+.r2d2-tool-header::before {
+  content: '\25B6';
+  font-size: 9px;
+  color: var(--r2d2-muted);
+}
+
+.r2d2-tool.r2d2-expanded .r2d2-tool-header::before { content: '\25BC'; }
+
+.r2d2-tool-status { color: var(--r2d2-muted); }
+.r2d2-tool-ok .r2d2-tool-status { color: var(--r2d2-agent-accent); }
+.r2d2-tool-error .r2d2-tool-status { color: var(--r2d2-error-accent); }
+
+.r2d2-tool-name {
+  color: var(--r2d2-agent-accent);
+  font-weight: 600;
+}
+
+.r2d2-tool-summary {
+  flex: 1;
+  overflow: hidden;
+  color: var(--r2d2-muted);
+  font-family: var(--r2d2-mono);
+  font-size: 11px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.r2d2-tool-body { display: none; }
+.r2d2-tool.r2d2-expanded .r2d2-tool-body { display: block; }
+
+.r2d2-tool-input,
+.r2d2-tool-result {
+  margin: 4px 0 0;
+  padding: 6px var(--r2d2-gap);
+  max-height: 200px;
+  overflow: auto;
+  border-radius: 2px;
+  color: #aaa;
+  font-family: var(--r2d2-mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.r2d2-tool-result {
+  border-left: 2px solid #7a8aaa;
+  background: var(--r2d2-tool-result-bg);
+}
+
+.r2d2-thinking {
+  margin: 6px 0;
+  padding: 6px var(--r2d2-gap);
+  border-left: 2px solid var(--r2d2-thinking-accent);
+  border-radius: 2px;
+  background: var(--r2d2-thinking-bg);
+  color: #aaa;
+  font-size: 12px;
+}
+
+.r2d2-thinking-header {
+  color: var(--r2d2-thinking-accent);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.r2d2-thinking-header::before {
+  content: '\25B6 ';
+  font-size: 9px;
+}
+
+.r2d2-thinking.r2d2-expanded .r2d2-thinking-header::before { content: '\25BC '; }
+
+.r2d2-thinking-body {
+  display: none;
+  margin-top: 4px;
+  max-height: 200px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-style: italic;
+}
+
+.r2d2-thinking.r2d2-expanded .r2d2-thinking-body { display: block; }
+
+/* Blocks older than the last few, folded into one line. */
+.r2d2-fold { margin: 4px 0; }
+
+.r2d2-fold-toggle {
+  padding: 4px var(--r2d2-gap);
+  color: var(--r2d2-agent-accent);
+  font-size: 12px;
+  cursor: pointer;
+  opacity: 0.8;
+}
+
+.r2d2-fold-toggle:hover {
+  opacity: 1;
+  text-decoration: underline;
+}
+
+.r2d2-fold > .r2d2-tool,
+.r2d2-fold > .r2d2-thinking { display: none; }
+
+.r2d2-fold.r2d2-expanded > .r2d2-tool,
+.r2d2-fold.r2d2-expanded > .r2d2-thinking { display: block; }
+
+/* ---- the working indicator ------------------------------------------------ */
+
+.r2d2-status {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: var(--r2d2-gap) 10px;
+  color: var(--r2d2-thinking-accent);
+  font-size: 12px;
+}
+
+.r2d2-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: r2d2-pulse 1.4s ease-in-out infinite;
+}
+
+/* Waiting on a background task is a different state from a turn running: the
+ * agent is idle and something it launched is not. */
+.r2d2-status-dot-waiting { color: var(--r2d2-user-accent); }
+
+.r2d2-status-text { letter-spacing: 0.3px; }
+
+@keyframes r2d2-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+/* ---- the composer --------------------------------------------------------- */
+
+.r2d2-composer {
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  gap: var(--r2d2-gap);
+  padding: var(--r2d2-gap);
+  border-top: 1px solid var(--r2d2-border);
+  background: var(--r2d2-surface);
+}
+
+.r2d2-context-badge {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  width: 100%;
+  padding: 4px var(--r2d2-gap);
+  border: 1px solid #3a5a7a;
+  border-radius: 4px;
+  background: var(--r2d2-user-bg);
+  font-size: 12px;
+}
+
+.r2d2-context-text {
+  flex: 1;
+  overflow: hidden;
+  color: var(--r2d2-user-accent);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.r2d2-context-clear {
+  flex-shrink: 0;
+  color: var(--r2d2-muted);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.r2d2-context-clear:hover { color: var(--r2d2-fg); }
+
+.r2d2-input {
+  flex: 1;
+  min-width: 0;
+  padding: var(--r2d2-gap);
+  border: 1px solid #444;
+  border-radius: 4px;
+  background: var(--r2d2-sunken);
+  color: var(--r2d2-fg);
+  font-family: inherit;
+  font-size: var(--r2d2-font-size);
+  resize: none;
+}
+
+.r2d2-input:focus {
+  outline: none;
+  border-color: var(--r2d2-button-bg);
+}
+
+.r2d2-send {
+  align-self: flex-end;
+  padding: var(--r2d2-gap) 16px;
+  border: none;
+  border-radius: 4px;
+  background: var(--r2d2-button-bg);
+  color: #fff;
+  font-size: var(--r2d2-font-size);
+  cursor: pointer;
+}
+
+.r2d2-send:hover { background: var(--r2d2-button-hover); }
+
+.r2d2-input:disabled,
+.r2d2-send:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

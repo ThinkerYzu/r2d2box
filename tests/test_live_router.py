@@ -75,7 +75,10 @@ async def test_two_browsers_and_one_live_agent(live_app):
         turns = [await receive_turn(connection) for connection in (first, second)]
 
     for messages in turns:
-        assert messages[0]["type"] == "turn_start"
+        # The question first, so the tab that did not type it still has it.
+        assert messages[0]["type"] == "turn_prompt"
+        assert messages[0]["text"] == "Reply with exactly: PONG"
+        assert messages[1]["type"] == "turn_start"
         assert messages[-1]["outcome"] == "success"
         assert "ack" not in [message["type"] for message in messages]
         text = "".join(

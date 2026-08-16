@@ -99,11 +99,13 @@ async def test_two_clients_on_one_session_both_see_the_whole_turn(mounted):
         await run_one_turn(box.host)
 
         for connection in (first, second):
-            turn = [await connection.receive_json() for _ in range(3)]
+            turn = [await connection.receive_json() for _ in range(4)]
             assert [message["type"] for message in turn] == [
-                "turn_start", "text", "turn_end",
+                "turn_prompt", "turn_start", "text", "turn_end",
             ]
             assert {message["turn"]["id"] for message in turn} == {"t-1"}
+            # The tab that did not type still saw what was typed.
+            assert turn[0]["text"] == "what host is this?"
 
         # Neither socket was closed on the other's account — the 4001
         # displacement agent-desktop-env does today has no counterpart here.
@@ -126,6 +128,7 @@ async def test_a_client_that_leaves_mid_turn_finds_the_turn_finished_on_its_retu
         proxy = box.host.proxies[("bug-1", "s1")]
         await wait_until(lambda: proxy.submits, what="the submit reaching agent-proxy")
         await proxy.emit({"type": "turn_start", "turn": {"id": "t-1", "kind": "user"}})
+        assert (await leaving.receive_json())["type"] == "turn_prompt"
         assert (await leaving.receive_json())["type"] == "turn_start"
 
     session = await box.host.session("bug-1", "s1")
@@ -231,10 +234,13 @@ async def test_a_submit_is_acknowledged_by_the_turn_start_every_client_sees(moun
         await connection.send_json({"type": "submit", "text": "what host is this?"})
         await run_one_turn(box.host)
 
-        first = await connection.receive_json()
+        prompt = await connection.receive_json()
+        started = await connection.receive_json()
 
-    assert first["type"] == "turn_start"
-    assert first["turn"]["id"] == "t-1"
+    assert prompt["type"] == "turn_prompt"
+    assert prompt["text"] == "what host is this?"
+    assert started["type"] == "turn_start"
+    assert started["turn"]["id"] == prompt["turn"]["id"] == "t-1"
 
 
 async def test_a_submits_context_reaches_the_hosts_build_prompt_hook(mounted):
@@ -528,6 +534,20 @@ async def test_deleting_a_session_clears_what_it_said(mounted):
     assert await box.host.store.read_turns("bug-1", "s1") == []
     async with websocket(app, WS) as returning:
         assert (await attach(returning))["turns"] == []
+
+
+async def test_deleting_a_session_tells_the_tab_still_watching_it(mounted):
+    """The Phase 3 gap, closed: a watcher's socket stays healthy, so it has to be told."""
+    app, box = mounted()
+
+    async with websocket(app, WS) as watching:
+        await attach(watching)
+
+        await request(app, "DELETE", "/chat/sessions/bug-1/s1")
+
+        closed = await watching.receive_json()
+        assert closed["type"] == "session_closed"
+        assert (closed["topic"], closed["session"]) == ("bug-1", "s1")
 
 
 async def test_listing_a_topic_nobody_has_used_is_empty_rather_than_an_error(mounted):

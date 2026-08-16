@@ -21,7 +21,11 @@ from conftest import FIXTURES_DIR, SCRIPTED_PROXY
 
 WS = "/chat/ws"
 
+# What the fixture's turn leaves in the transcript, and what a client watching
+# it live sees. They differ by one message: `turn_prompt` says what was asked,
+# which the stored turn already carries in its `user` field.
 A_WHOLE_TURN = ["turn_start", "text", "tool_use", "tool_result", "text", "turn_end"]
+A_WHOLE_TURN_LIVE = ["turn_prompt", *A_WHOLE_TURN]
 
 
 @pytest.fixture
@@ -80,15 +84,18 @@ async def test_two_websocket_clients_receive_one_turn_from_one_process(scripted_
         await second.send_json({"type": "submit", "text": "what host is this?"})
 
         for connection in (first, second):
-            messages = await receive_turn(connection, A_WHOLE_TURN)
+            messages = await receive_turn(connection, A_WHOLE_TURN_LIVE)
             assert {message["turn"]["id"] for message in messages} == {"t-1"}
-            assert messages[3]["content"] == "r2d2"
+            assert messages[4]["content"] == "r2d2"
             # DESIGN Decision 1: agent-proxy's own numbering is preserved
             # beside r2d2box's rather than overwritten by it. r2d2box's counts
             # broadcasts and nothing else, so both clients see the same
-            # unbroken run however many of them attached first.
-            assert [message["seq"] for message in messages] == [1, 2, 3, 4, 5, 6]
-            assert [message["proxy_seq"] for message in messages] == [3, 4, 5, 6, 7, 8]
+            # unbroken run however many of them attached first — including the
+            # `turn_prompt` r2d2box originates, which has no proxy_seq because
+            # no proxy sent it.
+            assert [message["seq"] for message in messages] == [1, 2, 3, 4, 5, 6, 7]
+            assert "proxy_seq" not in messages[0]
+            assert [message["proxy_seq"] for message in messages[1:]] == [3, 4, 5, 6, 7, 8]
 
     assert len(box.host.live_sessions("bug-1992198")) == 1
 
@@ -108,7 +115,7 @@ async def test_a_session_made_over_rest_carries_its_transcript_to_the_next_clien
         )
         await connection.receive_json()
         await connection.send_json({"type": "submit", "text": "what host is this?"})
-        await receive_turn(connection, A_WHOLE_TURN)
+        await receive_turn(connection, A_WHOLE_TURN_LIVE)
         # `one-turn.jsonl` exits at the end of its turn, so the process really
         # is gone by the time the next client arrives.
         assert (await connection.receive_json())["type"] == "process_exited"

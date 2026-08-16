@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>r2d2box demo</title>
+<link rel="stylesheet" href="/chat/static/r2d2box.css">
+<style>
+  /* The host's page. Everything here is outside the box: the panel frame, the
+     session picker, the buttons. The box itself gets one empty div. */
+  body {
+    margin: 0;
+    height: 100vh;
+    display: grid;
+    grid-template-columns: 1fr 420px;
+    font: 14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: #e0e0e0;
+    background: #1e1e1e;
+  }
+  main { padding: 24px 32px; overflow: auto; line-height: 1.6; }
+  main code { background: #2d2d2d; padding: 1px 5px; border-radius: 3px; }
+  #panel { display: flex; flex-direction: column; border-left: 1px solid #333; min-height: 0; }
+  #panel-header {
+    display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+    padding: 8px 12px; background: #2d2d2d; border-bottom: 1px solid #333;
+  }
+  #panel-header select, #panel-header button, #panel-header input {
+    background: #1e1e1e; color: #e0e0e0; border: 1px solid #444;
+    border-radius: 3px; padding: 3px 8px; font: inherit; font-size: 12px;
+  }
+  #panel-header button { cursor: pointer; }
+  #chat { flex: 1; min-height: 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>r2d2box</h1>
+  <p>
+    The panel on the right is one <code>R2D2Box.mount</code> call into an empty
+    <code>&lt;div&gt;</code>. The header above it — the topic field, the session
+    picker, the two buttons — is this page's own, built on the router's REST
+    endpoints, because the box draws the conversation and the host draws
+    everything around it.
+  </p>
+  <p>
+    Open this page in a second tab on the same session to watch both halves of
+    one conversation: a turn started in either tab appears in both, and blocks
+    the other tab's input while it runs.
+  </p>
+  <p>
+    <strong>Context</strong> is the box's ride-along JSON. Type something into
+    the context field and the demo's <code>build_prompt</code> hook prepends it
+    to whatever you ask next — which is how agent-desktop-env sends the text a
+    reader has selected in a document.
+  </p>
+</main>
+
+<div id="panel">
+  <div id="panel-header">
+    <input id="topic" value="demo" size="10" title="topic">
+    <select id="sessions" title="session"></select>
+    <button id="new-session" type="button">New</button>
+    <button id="close-session" type="button">Close</button>
+    <input id="context" placeholder="context…" size="12">
+  </div>
+  <div id="chat"></div>
+</div>
+
+<script src="/chat/static/vendor/marked.min.js"></script>
+<script src="/chat/static/vendor/purify.min.js"></script>
+<script src="/chat/static/r2d2box.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  var topicEl = document.getElementById('topic');
+  var sessionsEl = document.getElementById('sessions');
+  var contextEl = document.getElementById('context');
+
+  // The session in the URL, so a second tab can be opened on the same
+  // conversation by copying the address bar.
+  var params = new URLSearchParams(location.search);
+  if (params.get('topic')) topicEl.value = params.get('topic');
+
+  var box = R2D2Box.mount(document.getElementById('chat'), {
+    endpoint: '/chat',
+    topic: topicEl.value,
+    session: params.get('session') || null,
+  });
+
+  // The box reports the session it ended up attached to, whether the page
+  // named one or the server made one. That is what keeps the host's picker
+  // and the URL honest.
+  box.on('attached', function (message) {
+    params.set('topic', message.topic);
+    params.set('session', message.session);
+    history.replaceState(null, '', '?' + params.toString());
+    listSessions(message.session);
+  });
+
+  box.on('session_closed', function () {
+    listSessions(null);
+  });
+
+  async function listSessions(selected) {
+    var response = await fetch('/chat/sessions/' + encodeURIComponent(topicEl.value));
+    var data = await response.json();
+    sessionsEl.textContent = '';
+    data.sessions.forEach(function (entry) {
+      var option = document.createElement('option');
+      option.value = entry.session;
+      option.textContent = entry.session;
+      if (entry.session === selected) option.selected = true;
+      sessionsEl.appendChild(option);
+    });
+  }
+
+  sessionsEl.addEventListener('change', function () {
+    box.attach(topicEl.value, sessionsEl.value);
+  });
+
+  topicEl.addEventListener('change', function () {
+    box.attach(topicEl.value, null);
+  });
+
+  document.getElementById('new-session').addEventListener('click', function () {
+    box.attach(topicEl.value, null);
+  });
+
+  document.getElementById('close-session').addEventListener('click', async function () {
+    if (!sessionsEl.value) return;
+    await fetch('/chat/sessions/' + encodeURIComponent(topicEl.value) + '/' +
+                encodeURIComponent(sessionsEl.value), { method: 'DELETE' });
+    // Nothing else to do: the session broadcasts `session_closed`, and the box
+    // clears itself and attaches to a fresh conversation.
+  });
+
+  contextEl.addEventListener('change', function () {
+    box.setContext(contextEl.value || null);
+  });
+})();
+</script>
+</body>
+</html>
