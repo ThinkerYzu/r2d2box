@@ -1,0 +1,6 @@
+# A line that is not JSON at all, between two that are. agent-proxy should
+# never write one; the reader still has to keep going if it does.
+{"op": "emit", "message": {"type": "text", "turn": {"id": "t-1", "kind": "unowned"}, "text": "before"}}
+{"op": "junk", "text": "this is not json"}
+{"op": "emit", "message": {"type": "text", "turn": {"id": "t-1", "kind": "unowned"}, "text": "after"}}
+{"op": "exit"}

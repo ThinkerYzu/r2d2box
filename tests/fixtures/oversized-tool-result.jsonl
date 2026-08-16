@@ -1,0 +1,11 @@
+# The failure both bzdash and agent-desktop-env hit in the field: one turn
+# whose tool_result is a single line larger than the reader's buffer. The turn
+# must survive it — the messages after the oversized line still arrive.
+{"op": "await_submit"}
+{"op": "ack"}
+{"op": "emit", "message": {"type": "turn_start", "turn": {"id": "t-1", "kind": "user"}}}
+{"op": "emit", "message": {"type": "tool_use", "turn": {"id": "t-1", "kind": "user"}, "tool": "Read", "input": {"file_path": "/var/log/huge.log"}, "tool_use_id": "tu-1"}}
+{"op": "oversize", "bytes": 17825792}
+{"op": "emit", "message": {"type": "text", "turn": {"id": "t-1", "kind": "user"}, "text": "That file is very large."}}
+{"op": "emit", "message": {"type": "turn_end", "turn": {"id": "t-1", "kind": "user"}, "basis": "marker:turn_duration", "outcome": "success", "usage": {}}}
+{"op": "exit"}

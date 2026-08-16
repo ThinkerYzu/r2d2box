@@ -11,7 +11,23 @@ WebSocket that carries the message stream, the transcript store, and the
 JavaScript that renders messages, tool calls, and the prompt input into a `div`
 the page provides.
 
-**Status:** design phase — no code yet.
+**Status:** Phase 1 of 5 — the process layer. `AgentConfig` becomes an
+agent-proxy command line, and one agent-proxy process is spawned, read and shut
+down correctly. Nothing above it exists yet: no sessions, no store, no router,
+no front-end.
+
+## Development
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -e '.[dev]'
+.venv/bin/pytest                             # the suite; needs no `claude`
+R2D2BOX_RUN_LIVE=1 .venv/bin/pytest -m live  # one real turn; needs agent-proxy and claude
+```
+
+The suite runs a real subprocess — `tests/scripted_proxy.py`, replaying a
+JSON-lines script — rather than mocking the pipe, so the read-buffer limit and
+the shutdown path are the ones production uses.
 
 ## Documentation
 

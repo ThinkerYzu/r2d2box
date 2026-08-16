@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "r2d2box"
+version = "0.0.0"
+description = "An embeddable chat box for AI agents: a mountable agent host and the front-end panel that drives it."
+requires-python = ">=3.11"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Kui-Feng Lee" }]
+dependencies = [
+    "fastapi>=0.110",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# The browser half ships inside the package (SPEC D8) — the mounted router
+# serves it, so a host installs one dependency and copies no files.
+[tool.setuptools.package-data]
+r2d2box = ["static/*.js", "static/*.css", "static/vendor/*.js"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "live: requires `agent-proxy` and a real `claude` on PATH; slow",
+    "slow: long-running tests; opt in with `-m slow`",
+]

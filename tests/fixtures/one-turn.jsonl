@@ -1,0 +1,10 @@
+# One ordinary user turn: prose, a tool call, its result, and a clean end.
+{"op": "await_submit"}
+{"op": "ack"}
+{"op": "emit", "message": {"type": "turn_start", "turn": {"id": "t-1", "kind": "user"}}}
+{"op": "emit", "message": {"type": "text", "turn": {"id": "t-1", "kind": "user"}, "text": "Reading the file now."}}
+{"op": "emit", "message": {"type": "tool_use", "turn": {"id": "t-1", "kind": "user"}, "tool": "Read", "input": {"file_path": "/etc/hostname"}, "tool_use_id": "tu-1"}}
+{"op": "emit", "message": {"type": "tool_result", "turn": {"id": "t-1", "kind": "user"}, "tool_use_id": "tu-1", "content": "r2d2", "is_error": false}}
+{"op": "emit", "message": {"type": "text", "turn": {"id": "t-1", "kind": "user"}, "text": "The host is r2d2."}}
+{"op": "emit", "message": {"type": "turn_end", "turn": {"id": "t-1", "kind": "user"}, "basis": "marker:turn_duration", "outcome": "success", "usage": {"duration_ms": 1200}}}
+{"op": "exit"}

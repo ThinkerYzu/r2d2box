@@ -1,0 +1,4 @@
+# Emits `ready` and then nothing, staying alive until it is closed. For the
+# shutdown and write-side tests, which need a live process and no stream.
+{"op": "await_submit"}
+{"op": "exit"}
