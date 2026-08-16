@@ -1,10 +1,12 @@
 """r2d2box — an embeddable chat box for AI agents.
 
-The public surface grows one build phase at a time. Phase 1 is the process
-layer: how a host describes an agent, and one agent-proxy subprocess driven
-correctly. Phase 2 adds the conversation on top of it — `AgentHost`, `Session`
-and the transcript stores. Phase 3 adds `R2D2Box`, the mountable router that
-puts a browser in front of all of it. The browser half arrives in Phase 4.
+The surface is four layers, each usable without the ones above it. `config.py`
+and `proxy.py` are the process layer: how a host describes an agent, and one
+agent-proxy subprocess driven correctly. `session.py`, `host.py` and `store.py`
+are the conversation — turns, fan-out, topics, resume, transcripts. `router.py`
+is `R2D2Box`, the mountable router that puts a browser in front of all of it.
+The browser half is not Python at all: it ships as `static/r2d2box.js` inside
+this package and is served by that router (SPEC D8).
 
 A host application needs `R2D2Box` and `AgentConfig`, plus a store; everything
 else here is for a caller reaching below the router on purpose.

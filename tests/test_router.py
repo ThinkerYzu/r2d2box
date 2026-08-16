@@ -612,7 +612,7 @@ async def test_listing_a_topic_nobody_has_used_is_empty_rather_than_an_error(mou
 
 
 async def test_the_static_mount_serves_the_front_end(mounted, tmp_path):
-    """Phase 4's assets get a URL that does not change: `{prefix}/static`."""
+    """The front-end's URL is the mount prefix plus `/static`, and a host may override it."""
     (tmp_path / "r2d2box.js").write_text("export const version = 3;\n", encoding="utf-8")
     app, box = mounted(static_dir=tmp_path)
 

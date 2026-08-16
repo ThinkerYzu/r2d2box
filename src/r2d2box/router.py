@@ -54,8 +54,8 @@ _log = logging.getLogger(__name__)
 # enough that a browser that has stopped reading is noticed within one turn.
 DEFAULT_CLIENT_QUEUE_LIMIT = 512
 
-# Where the front-end lives inside the installed package (SPEC D8). Phase 4
-# fills it; the mount is here so a host's URL for the assets never changes.
+# Where the front-end lives inside the installed package (SPEC D8): the chat
+# box, its stylesheet, and the vendored `marked` and DOMPurify beside them.
 _PACKAGE_STATIC_DIR = Path(__file__).parent / "static"
 
 
@@ -463,10 +463,11 @@ class R2D2Box:
     def _mount_static(self, static_dir: Path | None) -> None:
         """Serve the front-end at `{prefix}/static`, if the assets are there.
 
-        The directory is empty until Phase 4 builds the chat box, and a missing
-        one is a warning rather than an error: the server half is useful on its
-        own, and a host that only wants the WebSocket should not be stopped by
-        assets it will not ask for.
+        A missing directory is a warning rather than an error: the server half
+        is useful on its own, and a host that only wants the WebSocket — a
+        cron job, a CLI, an app with its own renderer — should not be stopped
+        by assets it will never ask for. `static_dir` overrides the packaged
+        copy, which is how a host serves a modified box.
         """
         directory = Path(static_dir) if static_dir is not None else _PACKAGE_STATIC_DIR
         if not directory.is_dir():
