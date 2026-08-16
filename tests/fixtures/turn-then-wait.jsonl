@@ -1,0 +1,14 @@
+# One user turn, and then a process that stays alive waiting for a second
+# prompt that never comes. For the tests that need something real to evict.
+{"op": "await_submit"}
+{"op": "ack"}
+{"op": "emit", "message": {"type": "turn_start", "turn": {"id": "t-1", "kind": "user"}}}
+{"op": "emit", "message": {"type": "text", "turn": {"id": "t-1", "kind": "user"}, "text": "The host is r2d2."}}
+{"op": "emit", "message": {"type": "turn_end", "turn": {"id": "t-1", "kind": "user"}, "basis": "marker:turn_duration", "outcome": "success", "usage": {}}}
+{"op": "await_submit"}
+{"op": "ack"}
+{"op": "emit", "message": {"type": "turn_start", "turn": {"id": "t-2", "kind": "user"}}}
+{"op": "emit", "message": {"type": "text", "turn": {"id": "t-2", "kind": "user"}, "text": "Linux 7.0.0."}}
+{"op": "emit", "message": {"type": "turn_end", "turn": {"id": "t-2", "kind": "user"}, "basis": "marker:turn_duration", "outcome": "success", "usage": {}}}
+{"op": "await_submit"}
+{"op": "exit"}

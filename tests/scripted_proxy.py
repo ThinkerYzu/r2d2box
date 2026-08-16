@@ -7,6 +7,11 @@ exactly the ones production uses, with no `claude` and no pty anywhere.
 
     scripted_proxy.py --script tests/fixtures/one-turn.jsonl [proxy args...]
 
+With `--argv-out <path>` it also appends its own argv, as one JSON line per
+run, before doing anything else. That is how a test sees what the session
+layer asked for — a respawn's `--resume <id>`, above all — without reaching
+inside `AgentProxy`.
+
 The script is JSON-lines, one directive per line, run in order:
 
 | `op` | Does |
@@ -37,6 +42,7 @@ _IDLE_COUNTS = {"user": 0, "unowned": 0, "background": 0}
 
 def main(argv: list[str]) -> int:
     script_path = _script_path(argv)
+    _record_argv(argv)
     directives = _load(script_path)
     state = _State()
     _emit(state, {"type": "ready", "session_id": READY_SESSION_ID})
@@ -127,12 +133,34 @@ def _write_oversize(size: int) -> None:
 
 def _script_path(argv: list[str]) -> str:
     """Pull `--script <path>` out of the argv; everything else is ignored."""
+    path = _option(argv, "--script")
+    if path is None:
+        raise SystemExit("scripted_proxy: --script <path> is required")
+    return path
+
+
+def _record_argv(argv: list[str]) -> None:
+    """Append this run's argv to the `--argv-out` file, if the caller named one.
+
+    Appended rather than overwritten because a session respawns into a second
+    process, and it is the difference between the two argvs that a resume test
+    is about.
+    """
+    path = _option(argv, "--argv-out")
+    if path is None:
+        return
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps(argv) + "\n")
+
+
+def _option(argv: list[str], name: str) -> str | None:
+    """The value of `--name <value>` or `--name=<value>` in `argv`, or None."""
     for index, arg in enumerate(argv):
-        if arg == "--script" and index + 1 < len(argv):
+        if arg == name and index + 1 < len(argv):
             return argv[index + 1]
-        if arg.startswith("--script="):
+        if arg.startswith(f"{name}="):
             return arg.split("=", 1)[1]
-    raise SystemExit("scripted_proxy: --script <path> is required")
+    return None
 
 
 def _load(path: str) -> list[dict]:
