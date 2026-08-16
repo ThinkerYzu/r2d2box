@@ -22,7 +22,7 @@ def test_proxy_bin_replaces_the_default():
 
 def test_every_field_maps_to_its_flag():
     config = AgentConfig(
-        cwd=Path("/home/thinker/progm/claudebugzilla"),
+        cwd=Path("/home/dev/project"),
         append_system_prompt="You are reviewing bug 1992198.",
         allowed_tools=["mcp__bzdash__worklog_append", "mcp__bzdash__bug_metadata"],
         mcp_config={"mcpServers": {"bzdash": {"command": "python3"}}},

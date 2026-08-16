@@ -4,8 +4,9 @@ Reference for an application embedding r2d2box. It covers the Python API, the
 JavaScript API, the WebSocket messages between them, and what a bzdash or
 agent-desktop-env maintainer has to replace to migrate.
 
-The design documents in [`proj_docs/r2d2box/`](../../proj_docs/r2d2box/) explain
-*why* each of these is the way it is. Nothing here requires reading them.
+A separate docforge — a spec, a design, an implementation guide and a testing
+guide, not published with the code — explains *why* each of these is the way it
+is. Nothing here requires reading them.
 
 **Contents:** [Install](#install) · [Quick start](#quick-start) ·
 [Python API](#python-api) · [JavaScript API](#javascript-api) ·
@@ -17,15 +18,19 @@ The design documents in [`proj_docs/r2d2box/`](../../proj_docs/r2d2box/) explain
 ## Install
 
 ```bash
-pip install -e /path/to/sources/r2d2box
+pip install -e /path/to/r2d2box
 ```
 
 Two things have to be on the machine that r2d2box does not install:
 
 | Needs | Why | Where from |
 |---|---|---|
-| `agent-proxy` on `$PATH` | the only way r2d2box reaches an agent | [`sources/agent-proxy/`](../agent-proxy/) |
+| `agent-proxy` on `$PATH` | the only way r2d2box reaches an agent | a separate tool, not yet published |
 | `claude` on `$PATH` | what agent-proxy drives | Claude Code |
+
+**agent-proxy is not open source yet**, so r2d2box does not run end to end
+without it. Everything below describes the API as built and tested; the test
+suite itself needs neither binary.
 
 The browser half ships **inside** the Python package and is served by the router
 you mount. There is no build step, no copy step, and nothing is fetched from a
@@ -158,7 +163,7 @@ a system prompt built from live data is never stale:
 async def agent_config(topic: str, session: str) -> AgentConfig:
     bug_id = int(topic.removeprefix("bug-"))
     return AgentConfig(
-        cwd=Path("/home/thinker/progm/claudebugzilla"),
+        cwd=Path("/home/dev/project"),
         append_system_prompt=await summarize_bug(bug_id),
         allowed_tools=["mcp__bzdash__worklog_append", "mcp__bzdash__bug_metadata"],
         mcp_config={"mcpServers": {"bzdash": {
@@ -490,7 +495,7 @@ client also carry `seq`; messages aimed at one connection carry
 | `session_closed` | r2d2box | this conversation is over; the last message a session sends |
 
 Forwarded messages are agent-proxy's own, unchanged, with an envelope added —
-see its [API.md § Message types](../agent-proxy/API.md) for their fields. Two
+see agent-proxy's own `API.md § Message types` for their fields. Two
 of its fields cannot survive as they are: agent-proxy's `seq` restarts at 1 with
 every process, so it is preserved as `proxy_seq`, and `ref` is r2d2box's
 internal correlation token and is dropped. `ack` and `ready` are not forwarded
@@ -702,9 +707,11 @@ ADE's own session picker and dialog stay in ADE. They are built on
 
 ## See also
 
-| Document | Covers |
-|---|---|
-| [agent-proxy API.md](../agent-proxy/API.md) | the message types r2d2box forwards; fixed input |
-| [SPEC.md](../../proj_docs/r2d2box/SPEC.md) | the problem, the requirements, and decisions D1-D8 |
-| [DESIGN.md](../../proj_docs/r2d2box/DESIGN.md) | the architecture and the eleven design decisions |
-| [TESTING-GUIDE.md](../../proj_docs/r2d2box/TESTING-GUIDE.md) | the test tiers and how to run them |
+In this repository: [README.md](README.md) for the shortest path to a running
+box, `demo/` for a whole host application in 89 lines, and the module
+docstrings, which carry the reasoning for anything here that reads as
+arbitrary.
+
+Outside it, and not published with the code: agent-proxy's own `API.md`, which
+documents the message types r2d2box forwards and is fixed input to all of this;
+and the docforge's spec, design, implementation guide and testing guide.

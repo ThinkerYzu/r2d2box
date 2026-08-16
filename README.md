@@ -5,17 +5,20 @@ front-end chat panel, so an app that wants to embed a live Claude agent doesn't
 have to build either.
 
 The host app supplies what is genuinely its own — the MCP servers, the system
-prompt, the tool allowlist — and r2d2box supplies the rest: the
-[agent-proxy](../agent-proxy/) subprocess and its turn correlation, the
-WebSocket that carries the message stream, the transcript store, and the
-JavaScript that renders messages, tool calls, and the prompt input into a `div`
-the page provides.
+prompt, the tool allowlist — and r2d2box supplies the rest: the `agent-proxy`
+subprocess and its turn correlation, the WebSocket that carries the message
+stream, the transcript store, and the JavaScript that renders messages, tool
+calls, and the prompt input into a `div` the page provides.
 
 **Status:** complete. An application mounts the router and gets a WebSocket two
 tabs can share, session REST for its own furniture, and the chat box served
 beside them. `demo/` is a working host; **[API.md](API.md) is the reference** —
 the Python API, the JavaScript API, the WebSocket messages, and what migrating
 an existing app involves.
+
+> **You need `agent-proxy`.** It is the only way r2d2box reaches an agent, and
+> it is a separate tool that is **not yet published** — so this repository does
+> not run on its own today. See [Requirements](#requirements).
 
 ```python
 from pathlib import Path
@@ -77,6 +80,24 @@ box = R2D2Box(
 A question typed while that turn is still starting queues behind it, so the
 conversation always begins where you meant it to.
 
+## Requirements
+
+| Needs | Why | Where from |
+|---|---|---|
+| Python ≥ 3.11, `fastapi` ≥ 0.110 | the router you mount | pip, as this package's dependency |
+| `agent-proxy` on `$PATH` | **the only way r2d2box reaches an agent** | a separate tool, not yet published |
+| `claude` on `$PATH` | what agent-proxy drives | Claude Code |
+| `uvicorn[standard]` | a plain `uvicorn` serves no WebSocket | pip, for the demo or your own server |
+
+**About agent-proxy.** r2d2box does not spawn `claude` itself, does not speak
+`stream-json`, and adds nothing to the turn protocol. It sits on agent-proxy,
+which drives an interactive `claude` over a pty and states turn boundaries
+explicitly — every message carries a turn id, a kind, and the outstanding
+user/unowned/background counts. That tool is not open source yet, so **this
+repository does not run end to end on its own today.** What does work without
+it is the whole test suite: 181 tests pass with neither binary installed,
+because every layer is tested against a stand-in for the one below it.
+
 ## Running the demo
 
 ```bash
@@ -123,14 +144,28 @@ if `node` is missing.
 
 ## Documentation
 
-**[API.md](API.md)** is the one to read if you are embedding r2d2box. Everything
-else is why it is shaped this way, and lives in the docforge:
+**[API.md](API.md)** is the one to read if you are embedding r2d2box: the
+Python API, the JavaScript API, the WebSocket messages, what happens when
+things go wrong, and what migrating an existing app involves.
 
-| Document | What it covers |
-|---|---|
-| [API.md](API.md) | the Python API, the JavaScript API, the WebSocket messages, migration |
-| [SPEC.md](../../proj_docs/r2d2box/SPEC.md) | problem, requirements, constraints, decisions |
-| [DESIGN.md](../../proj_docs/r2d2box/DESIGN.md) | architecture and the eleven design decisions |
-| [IMPLEMENTATION-GUIDE.md](../../proj_docs/r2d2box/IMPLEMENTATION-GUIDE.md) | file layout, build, phase plan |
-| [TESTING-GUIDE.md](../../proj_docs/r2d2box/TESTING-GUIDE.md) | the test tiers, the seams, the inventory |
-| [HANDOFF.md](../../proj_docs/r2d2box/HANDOFF.md) | current status and next actions |
+Everything else is *why* it is shaped this way, and lives in a separate
+docforge that is not published with the code — a spec (the problem, the
+requirements, and eight decisions), a design (the topic/session architecture
+and eleven more decisions), an implementation guide (file layout and the five
+build phases), a testing guide (the tiers and the stand-in seams), and one log
+per build session. `API.md` is written so you never need them.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
+
+Two third-party files are vendored under `src/r2d2box/static/vendor/`, each
+keeping its own license banner and terms:
+
+| File | Project | License |
+|---|---|---|
+| `marked.min.js` | [marked](https://github.com/markedjs/marked) 15.0.12 | MIT |
+| `purify.min.js` | [DOMPurify](https://github.com/cure53/DOMPurify) 3.2.4 | Apache-2.0 or MPL-2.0 |
+
+They are vendored rather than fetched so the front-end needs no build step and
+makes no runtime request to a CDN.
