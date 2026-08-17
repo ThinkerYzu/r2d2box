@@ -83,11 +83,19 @@ class Node {
     return node;
   }
 
+  /**
+   * Put `node` immediately before `reference`, taking it out of wherever it was.
+   *
+   * The unlink has to happen before `reference` is located, not after. The box
+   * moves an element forward among its own siblings — the fold container, past
+   * the turn's prose — and an index read while the node is still in place is
+   * one too high once it has been taken out.
+   */
   insertBefore(node, reference) {
+    if (node.parentNode) node.parentNode.removeChild(node);
     if (reference == null) return this.appendChild(node);
     const at = this.childNodes.indexOf(reference);
     if (at < 0) return this.appendChild(node);
-    if (node.parentNode) node.parentNode.removeChild(node);
     node.parentNode = this;
     this.childNodes.splice(at, 0, node);
     return node;

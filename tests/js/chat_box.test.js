@@ -134,6 +134,30 @@ test('older tool and thinking blocks fold away once there are too many', () => {
   includes(fold.firstChild.textContent, 'Hide 2 older items', 'and the label follows');
 });
 
+test('the fold sits against the visible blocks even when prose landed between them', () => {
+  const { socket, element } = mountBox(fakeMarkdown());
+
+  // A turn that calls a tool, answers, then calls four more: the prose element
+  // is created at the second message and so ends up between the first block and
+  // the rest, which is the arrangement that used to strand the fold above it.
+  socket.deliver(broadcast(1, {
+    type: 'tool_use', turn: turn('t-1'), tool: 'Read', input: {}, tool_use_id: 'tu-1',
+  }));
+  socket.deliver(broadcast(2, { type: 'text', turn: turn('t-1'), text: 'Looking at it.' }));
+  for (let i = 2; i <= 5; i++) {
+    socket.deliver(broadcast(i + 1, {
+      type: 'tool_use', turn: turn('t-1'), tool: 'Read', input: {}, tool_use_id: 'tu-' + i,
+    }));
+  }
+
+  const blocks = element.querySelector('.r2d2-message-assistant').children;
+  const at = blocks.indexOf(element.querySelector('.r2d2-fold'));
+  ok(blocks[at + 1].classList.contains('r2d2-tool'),
+    'the fold is followed by the oldest block still visible');
+  ok(blocks[at - 1].classList.contains('r2d2-markdown'),
+    'and the prose it moved past is above it');
+});
+
 // ---- the composer, whose state is the session's -----------------------------
 
 test('the composer is blocked while a turn runs and freed when it ends', () => {

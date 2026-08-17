@@ -240,7 +240,15 @@
    *
    * Blocks are collapsed by default and expand on a click. Only the last
    * `VISIBLE_BLOCKS` stay in place; the rest move into one collapsed container
-   * that sits where the oldest of them was, so the turn keeps its order.
+   * kept immediately above the oldest block still visible, so the fold and the
+   * blocks it hides read as one run.
+   *
+   * The fold is repositioned on every fold rather than placed once, because a
+   * turn's prose is a single element that lands wherever the first `text`
+   * message of the turn arrived. A turn that ran a tool, spoke, then ran more
+   * tools has that prose sitting between its early and late blocks, and a fold
+   * left at the oldest folded block's position would be stranded above it with
+   * the visible blocks below.
    */
   TurnView.prototype.addBlock = function (block) {
     this.blocks.push(block);
@@ -257,9 +265,9 @@
         updateFoldToggle(fold);
       });
       this.foldEl.appendChild(toggle);
-      this.el.insertBefore(this.foldEl, stale);
     }
     this.foldEl.appendChild(stale);
+    this.el.insertBefore(this.foldEl, this.blocks[this.blocks.length - VISIBLE_BLOCKS]);
     updateFoldToggle(this.foldEl);
   };
 
