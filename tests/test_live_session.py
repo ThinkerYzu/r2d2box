@@ -39,6 +39,11 @@ async def live_host(require_agent_proxy, tmp_path):  # noqa: F811  (the imported
     among the project's own transcripts, and the store is a real
     `FileTranscriptStore` because a resume is only interesting if the history
     it resumes was written somewhere.
+
+    Every activity edge is recorded on `host.activity`, with whether a process
+    was running when it arrived. Against the fakes a spawn is instant, so this
+    is the only place the claim that the signal precedes the process can be
+    checked at all.
     """
     workdir = tmp_path / "agent-cwd"
     workdir.mkdir()
@@ -50,7 +55,18 @@ async def live_host(require_agent_proxy, tmp_path):  # noqa: F811  (the imported
             extra_args=["--model", "haiku"],
         )
 
-    host = AgentHost(agent_config, store=FileTranscriptStore(tmp_path / "transcripts"))
+    edges: list[tuple[str, str, bool, bool]] = []
+
+    def on_activity(topic: str, name: str, active: bool) -> None:
+        session = next(s for s in host.live_sessions(topic) if s.name == name)
+        edges.append((topic, name, active, session.process_alive))
+
+    host = AgentHost(
+        agent_config,
+        on_activity=on_activity,
+        store=FileTranscriptStore(tmp_path / "transcripts"),
+    )
+    host.activity = edges
     yield host
     await host.close()
 
@@ -96,6 +112,22 @@ async def test_a_real_conversation_survives_losing_its_process(live_host):
     assert "PELICAN" in "".join(replies).upper(), (
         "the resumed agent did not remember the first turn"
     )
+
+
+async def test_the_activity_signal_brackets_a_real_turn(live_host):
+    """Up before there is a process, down once the agent has actually stopped."""
+    session = await live_host.session("live-topic", "s1")
+    assert not session.active
+
+    await run_turn(session, "Reply with exactly: PONG")
+
+    assert not session.active
+    assert live_host.activity == [
+        # No process yet: this edge is the submit, not the turn. A signal that
+        # waited for the ack would have shown nothing for the whole spawn.
+        ("live-topic", "s1", True, False),
+        ("live-topic", "s1", False, True),
+    ]
 
 
 async def test_both_attached_clients_see_a_real_turn(live_host):

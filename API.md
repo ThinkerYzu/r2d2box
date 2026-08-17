@@ -116,6 +116,7 @@ R2D2Box(
     *,
     build_prompt=None,
     opening_prompt=None,
+    on_activity=None,
     store=None,
     idle_timeout_s=1200,
     pending_evict_cap_s=14400,
@@ -131,6 +132,7 @@ R2D2Box(
 | `host` | — | a prebuilt `AgentHost` instead of `agent_config`; exactly one of the two |
 | `build_prompt` | identity | callback turning typed text plus context into the real prompt |
 | `opening_prompt` | none | callback giving a *new* conversation its first turn |
+| `on_activity` | none | callback told when a session starts working and when it stops |
 | `store` | `MemoryTranscriptStore()` | where finished turns go |
 | `idle_timeout_s` | 1200 | stop the agent behind a session idle this long |
 | `pending_evict_cap_s` | 14400 | stop it even with a turn in flight past this |
@@ -150,10 +152,13 @@ Four members matter to a host:
 Wire the lifespan, or call `aclose` from whatever shutdown hook you already
 have. Nothing else terminates the agent-proxy processes.
 
-### The three callbacks
+### The three callbacks that shape a turn
 
-All three may be sync or async — return a coroutine and it is awaited, so a
-callback that queries a database does not have to block the event loop.
+These three decide what the agent is and what it is asked. The fourth,
+`on_activity`, runs the other way and is [below](#knowing-when-a-session-is-working).
+
+All may be sync or async — return a coroutine and it is awaited, so a callback
+that queries a database does not have to block the event loop.
 
 **`agent_config(topic, session) -> AgentConfig`** is called at every spawn, not
 once at mount. That includes the respawn after an idle eviction or a crash, so
@@ -211,6 +216,75 @@ Three things about it are worth knowing:
   rather than racing ahead of it.
 - It does not go through `build_prompt`. The opening is your own words, not a
   person's question.
+
+### Knowing when a session is working
+
+Nothing else on the server side tells you a conversation is busy. The turn's
+messages go to the attached browsers and to the transcript; if your application
+wants to show a busy light on a list of conversations, throttle something while
+an agent is running, or write "in progress" to a row of its own, it needs the
+same fact.
+
+There are two ways to ask, and they answer the same question:
+
+**`on_activity(topic, session, active)`** is called once each time a session
+crosses between working and idle — never twice for the same state, and never at
+all for a session that stays quiet. It may be sync or async.
+
+```python
+async def on_activity(topic: str, session: str, active: bool) -> None:
+    await db.execute(
+        "UPDATE conversations SET working = ? WHERE topic = ? AND session = ?",
+        (active, topic, session),
+    )
+
+box = R2D2Box(agent_config, on_activity=on_activity)
+```
+
+**`session.active`** is the same value read rather than pushed, for an
+application that would rather ask at a moment of its own choosing:
+
+```python
+busy = [s.name for s in box.host.live_sessions("bug-1992198") if s.active]
+```
+
+A session is **working** when any of three things is true:
+
+| Working because | From | Until |
+|---|---|---|
+| a submit is in flight | the moment `submit` is called | agent-proxy acknowledges it, or it fails |
+| a turn has started and not ended | its `ack` | its `turn_end` |
+| a background command is running | `task_start` | `task_end` |
+
+The first is why the signal goes up before there is a turn to point at:
+assembling the prompt and spawning a process are the slow part of a submit, and
+a signal that waited for the ack would show nothing during the seconds a reader
+is most likely to be watching. The third is why this is broader than
+`turn_active` — a `run_in_background` command outliving its turn frees the
+composer but is still work.
+
+A live agent-proxy process is **not** working, and neither is an attached
+browser. A conversation nobody has spoken to in an hour is idle however many
+tabs are open on it.
+
+Three things about the callback are worth knowing before you write one:
+
+- **It is level-triggered, not a log of edges.** What you are told is true at
+  the moment you are told it. A session that goes busy and idle again while
+  your callback is still running collapses to nothing rather than arriving
+  backwards.
+- **A callback that raises costs its own notification and nothing else.** The
+  failure is logged and the conversation carries on — your status hook cannot
+  end a turn.
+- **It is awaited, so a slow one delays that session's own message stream** —
+  the same way a slow `build_prompt` delays its submit. It does not hold the
+  session lock, so attaching, `status` and every other session are unaffected.
+- **Do not drive the session from inside it.** Reading state is fine; calling
+  `submit`, `close` or `stop_process` waits on a lock the notification is
+  holding.
+
+The signal is the server's alone. Nothing about it goes on the wire, and a
+browser learns the same thing from `turn_active` and `task_ids`.
 
 ### `AgentConfig`
 
@@ -301,6 +375,7 @@ turn_id = await session.submit("why does it crash?")
 | `await attach(subscriber)` / `await detach(subscriber)` | subscribe and unsubscribe |
 | `await snapshot()` / `await status()` | the `attached` and `status` payloads |
 | `await report_error(text)` | broadcast a session-wide error of your own |
+| `active` | whether this session has any work in flight |
 | `turn_active`, `pending_turns`, `task_ids`, `process_alive`, `subscriber_count` | live state, derived rather than latched |
 | `await stop_process()` / `await close()` / `await clear()` | evict the agent / end the session / discard the transcript |
 
@@ -712,6 +787,7 @@ process never sees, and nothing surfaces the divergence.
 | `--mcp-config` mounting your MCP server for one item | `AgentConfig.mcp_config`, built in the same callback |
 | prepending selected text or other context to every prompt | `box.setContext(…)` plus `build_prompt` |
 | a host-side effect after a particular tool succeeds | `box.on('tool_result', …)` |
+| a server-side flag saying this conversation has an agent running | `on_activity`, or `session.active` |
 
 ### The front-end
 

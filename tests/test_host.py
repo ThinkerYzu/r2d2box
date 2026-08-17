@@ -122,6 +122,39 @@ async def test_the_spawn_tag_names_the_topic_and_session(host):
     assert host.spawns == [("bug-1", "s1", None)]
 
 
+# ---- the activity signal -----------------------------------------------------
+
+
+async def test_one_activity_callback_serves_every_session():
+    """It is given to the host, not to a session, so the edges name which one moved."""
+    edges = []
+    host = FakeHost(on_activity=lambda topic, name, active: edges.append((topic, name, active)))
+    try:
+        await run_one_turn(host, "bug-1", "s1", "first")
+        await run_one_turn(host, "bug-2", "s1", "second")
+    finally:
+        await host.close()
+
+    assert edges == [
+        ("bug-1", "s1", True), ("bug-1", "s1", False),
+        ("bug-2", "s1", True), ("bug-2", "s1", False),
+    ]
+
+
+async def test_the_host_can_be_asked_which_sessions_are_working():
+    """The pull side of the same question, for a host that would rather poll."""
+    host = FakeHost()
+    try:
+        busy = await host.session("bug-1", "s1")
+        await busy.submit("go")
+        await run_one_turn(host, "bug-1", "s2", "done already")
+
+        working = [session.name for session in host.live_sessions("bug-1") if session.active]
+        assert working == ["s1"]
+    finally:
+        await host.close()
+
+
 # ---- listing, for the host's own session picker ------------------------------
 
 

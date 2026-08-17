@@ -443,6 +443,162 @@ async def test_the_outstanding_counts_are_replaced_not_accumulated(started_sessi
     assert (await session.status())["outstanding"]["background"] == 0
 
 
+# ---- the activity signal -----------------------------------------------------
+
+
+def recorder() -> tuple[list[tuple[str, str, bool]], object]:
+    """A list of the edges reported, and the sync `on_activity` that appends to it."""
+    edges: list[tuple[str, str, bool]] = []
+    return edges, lambda topic, name, active: edges.append((topic, name, active))
+
+
+async def test_a_turn_raises_the_signal_and_lowers_it_again(fake_session):
+    edges, on_activity = recorder()
+    session, spawner = fake_session(on_activity=on_activity)
+    assert not session.active
+
+    turn_id = await session.submit("hello")
+    assert session.active
+    assert edges == [("topic-1", "s1", True)]
+
+    await spawner.latest.run_turn(turn_id)
+    await spawner.latest.drain()
+    assert not session.active
+    assert edges == [("topic-1", "s1", True), ("topic-1", "s1", False)]
+
+
+async def test_the_signal_fires_once_per_edge_and_not_once_per_message(fake_session):
+    """A turn is a handful of messages and two turns are two of everything; the host hears four."""
+    edges, on_activity = recorder()
+    session, spawner = fake_session(on_activity=on_activity)
+
+    for text in ("one", "two"):
+        turn_id = await session.submit(text)
+        await spawner.latest.run_turn(turn_id)
+        await spawner.latest.drain()
+
+    assert [active for _, _, active in edges] == [True, False, True, False]
+
+
+async def test_the_signal_is_up_before_the_agent_has_acknowledged_anything(fake_session):
+    """Assembling the prompt and spawning are the slow part, and they precede every turn."""
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def build_prompt(topic, name, text, context):
+        started.set()
+        await release.wait()
+        return text
+
+    edges, on_activity = recorder()
+    session, _ = fake_session(build_prompt=build_prompt, on_activity=on_activity)
+    pending = asyncio.ensure_future(session.submit("hello"))
+    await started.wait()
+
+    assert session.active and not session.turn_active
+    assert [active for _, _, active in edges] == [True]
+    release.set()
+    await pending
+
+
+async def test_a_live_process_with_nothing_running_is_not_activity(fake_session):
+    session, spawner = fake_session()
+    turn_id = await session.submit("hello")
+    await spawner.latest.run_turn(turn_id)
+    await spawner.latest.drain()
+
+    assert session.process_alive
+    assert not session.active
+
+
+async def test_a_background_task_keeps_the_session_active_past_its_turn(fake_session):
+    """The composer is free once the turn ends, but the machine still has work."""
+    edges, on_activity = recorder()
+    session, spawner = fake_session(on_activity=on_activity)
+    turn_id = await session.submit("go")
+    proxy = spawner.latest
+
+    await proxy.emit({"type": "task_start", "task": {"id": "bg-1"}, "turn": turn_ref(turn_id)})
+    await proxy.emit({"type": "turn_end", "turn": turn_ref(turn_id),
+                      "basis": "marker:turn_duration", "outcome": "success"})
+    await proxy.drain()
+    assert not session.turn_active
+    assert session.active
+    assert [active for _, _, active in edges] == [True]
+
+    await proxy.emit({"type": "task_end", "task": {"id": "bg-1"}})
+    await proxy.drain()
+    assert not session.active
+    assert [active for _, _, active in edges] == [True, False]
+
+
+async def test_a_rejected_submit_lowers_the_signal_again(fake_session):
+    """No turn is coming, so the session is idle the moment the refusal lands."""
+    edges, on_activity = recorder()
+    session, spawner = fake_session(on_activity=on_activity)
+    turn_id = await session.submit("first")
+    proxy = spawner.latest
+    await proxy.run_turn(turn_id)
+    await proxy.drain()
+    proxy.auto_ack = False
+
+    pending = asyncio.ensure_future(session.submit("   "))
+    await asyncio.sleep(0)
+    await proxy.reject("r2d2-2")
+    with pytest.raises(SubmitRejected):
+        await pending
+
+    assert not session.active
+    assert [active for _, _, active in edges] == [True, False, True, False]
+
+
+async def test_a_process_that_dies_mid_turn_lowers_the_signal(fake_session):
+    edges, on_activity = recorder()
+    session, spawner = fake_session(on_activity=on_activity)
+    turn_id = await session.submit("go")
+    proxy = spawner.latest
+    await proxy.emit({"type": "turn_start", "turn": turn_ref(turn_id)})
+    await proxy.drain()
+    assert session.active
+
+    await proxy.end_stream()
+    await wait_until(lambda: not session.active, what="the session going idle")
+    assert [active for _, _, active in edges] == [True, False]
+
+
+async def test_an_async_activity_callback_is_awaited(fake_session):
+    edges = []
+
+    async def on_activity(topic, name, active):
+        await asyncio.sleep(0)
+        edges.append(active)
+
+    session, spawner = fake_session(on_activity=on_activity)
+    turn_id = await session.submit("hello")
+    await spawner.latest.run_turn(turn_id)
+    await spawner.latest.drain()
+
+    assert edges == [True, False]
+
+
+async def test_a_failing_activity_callback_costs_only_its_notification(fake_session):
+    """A host's status hook must not be able to end a conversation."""
+
+    def on_activity(topic, name, active):
+        raise RuntimeError("the host's status table is down")
+
+    session, spawner = fake_session(on_activity=on_activity)
+    subscriber = RecordingSubscriber()
+    await session.attach(subscriber)
+
+    turn_id = await session.submit("hello")
+    await spawner.latest.run_turn(turn_id)
+    await spawner.latest.drain()
+
+    assert "turn_end" in subscriber.types()
+    assert (await session.snapshot())["turns"][0]["user"] == "hello"
+    assert not session.active
+
+
 # ---- losing the process ------------------------------------------------------
 
 

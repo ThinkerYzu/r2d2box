@@ -80,6 +80,22 @@ box = R2D2Box(
 A question typed while that turn is still starting queues behind it, so the
 conversation always begins where you meant it to.
 
+The server side can also be told when a conversation is working, which nothing
+else there reports — the turn's messages go to the browsers and the transcript.
+`on_activity` fires once when a session starts working and once when it stops,
+and `session.active` is the same fact read rather than pushed:
+
+```python
+box = R2D2Box(
+    agent_config,
+    on_activity=lambda topic, session, active: mark_working(topic, session, active),
+)
+```
+
+Working means a submit in flight, a turn running, or a background command still
+going — so it goes up before there is a process, and stays up after a turn that
+left work behind.
+
 ## Requirements
 
 | Needs | Why | Where from |
@@ -95,7 +111,7 @@ which drives an interactive `claude` over a pty and states turn boundaries
 explicitly — every message carries a turn id, a kind, and the outstanding
 user/unowned/background counts. That tool is not open source yet, so **this
 repository does not run end to end on its own today.** What does work without
-it is the whole test suite: 184 tests pass with neither binary installed,
+it is the whole test suite: 196 tests pass with neither binary installed,
 because every layer is tested against a stand-in for the one below it.
 
 ## Running the demo
@@ -123,7 +139,7 @@ await session.submit("why does it crash?")
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
-.venv/bin/pytest                             # 184 tests, ~1s; needs no `claude`
+.venv/bin/pytest                             # 196 tests, ~1s; needs no `claude`
 node tests/js/run.js                         # the front-end's 39, on their own
 R2D2BOX_RUN_LIVE=1 .venv/bin/pytest -m live  # 5 real conversations; needs agent-proxy and claude
 ```

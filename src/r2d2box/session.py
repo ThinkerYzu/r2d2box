@@ -66,6 +66,13 @@ SpawnProxy = Callable[[str | None], Awaitable[AgentProxy]]
 # coroutine.
 BuildPrompt = Callable[..., str | Awaitable[str]]
 
+# Told when a session starts working and when it stops. Called as
+# `on_activity(topic, session, active)` once per edge, never twice for the same
+# state, and may be sync or async. It is the server side's own signal: nothing
+# about it reaches a client, which learns the same thing from `turn_active` and
+# `task_ids`.
+ActivityCallback = Callable[..., None | Awaitable[None]]
+
 
 class SubmitRejected(RuntimeError):
     """agent-proxy refused a submit, so no turn is coming for it."""
@@ -106,6 +113,7 @@ class Session:
         spawn: SpawnProxy,
         store: TranscriptStore,
         build_prompt: BuildPrompt | None = None,
+        on_activity: ActivityCallback | None = None,
         claude_session_id: str | None = None,
     ) -> None:
         self.topic = topic
@@ -116,6 +124,7 @@ class Session:
         self._spawn = spawn
         self._store = store
         self._build_prompt = build_prompt
+        self._on_activity = on_activity
 
         self._proxy: AgentProxy | None = None
         self._pump: asyncio.Task[None] | None = None
@@ -124,6 +133,10 @@ class Session:
 
         self._lock = asyncio.Lock()
         self._start_lock = asyncio.Lock()
+        # Ordering for the activity signal, and the state it last reported. A
+        # session starts idle, so the first edge a host hears is a real one.
+        self._activity_lock = asyncio.Lock()
+        self._reported_active = False
         self._subscribers: set[Subscriber] = set()
 
         self._seq = 0
@@ -136,6 +149,11 @@ class Session:
         self._proxy_turn_ids: dict[str, str] = {}
         # Submits still waiting for their `ack`, by the ref each carried.
         self._pending: dict[str, _PendingSubmit] = {}
+        # Calls inside `submit`, whether or not they have reached agent-proxy
+        # yet. Counted separately from `_pending` because the slow part of a
+        # submit — assembling the prompt, spawning a process — happens before a
+        # ref exists, and a host watching `active` should see that too.
+        self._submits_in_flight = 0
         # Turns that have started and not ended, by turn id. A finished turn
         # leaves here for the store and is not kept.
         self._open_turns: dict[str, Turn] = {}
@@ -148,6 +166,28 @@ class Session:
     def process_alive(self) -> bool:
         """True while an agent-proxy is running for this session."""
         return self._proxy is not None and self._proxy.alive
+
+    @property
+    def active(self) -> bool:
+        """True while this session has any work in flight — the server's busy light.
+
+        Work is a submit on its way to agent-proxy, a turn that has started and
+        not ended, or a background command still running: the three things that
+        outlive the request that started them. A process that is merely alive
+        is not work, and neither is a client being attached — a session nobody
+        has spoken to in an hour reads as idle however many tabs are watching
+        it.
+
+        Broader than `turn_active`, which is only about the composer. A
+        background command left running after its turn ended blocks nothing in
+        the browser but is very much still work for the machine, and that is
+        the difference between the two.
+
+        This is the pull side of the `on_activity` callback; both answer the
+        same question, and a host that only ever asks at a moment of its own
+        choosing needs nothing else.
+        """
+        return bool(self._open_turns or self._task_ids or self._submits_in_flight)
 
     @property
     def turn_active(self) -> bool:
@@ -206,6 +246,26 @@ class Session:
         if self._closed:
             raise ConnectionError(f"session {self.topic}/{self.name} is closed")
 
+        # The session counts as working from here rather than from the ack.
+        # Everything slow about a submit — waiting out an opening turn,
+        # assembling the prompt, spawning a process — happens before any turn
+        # exists, and a host told about activity only once the ack lands would
+        # see nothing at all during the part that takes seconds.
+        self._submits_in_flight += 1
+        await self._settle_activity()
+        try:
+            return await self._run_submit(text, context, assemble)
+        finally:
+            self._submits_in_flight -= 1
+            await self._settle_activity()
+
+    async def _run_submit(self, text: str, context: Any, assemble: bool) -> str:
+        """The body of `submit`, from the opening turn it queues behind to the ack.
+
+        Split out so `submit` can count the whole thing as activity in one
+        `try`/`finally` without burying the work two levels deeper. Everything
+        the caller sees — the return value, every exception — is this method's.
+        """
         await self._await_opening()
         prompt = await self._assemble_prompt(text, context) if assemble else text
         async with self._start_lock:
@@ -434,33 +494,45 @@ class Session:
 
         `_localize_turn` runs first, so everything below this line — and every
         turn id that leaves the session — is in this conversation's numbering.
+
+        The activity signal is settled after the lock is released rather than
+        inside it, so a host's callback does not hold up the clients attaching
+        to this session the way a slow `Subscriber.send` does.
         """
-        async with self._lock:
-            self.last_active = time.monotonic()
-            message = await self._localize_turn(message)
-            outstanding = message.get("outstanding")
-            if isinstance(outstanding, dict):
-                # Absolute, never a delta (agent-proxy API.md § The stream), so
-                # it is replaced rather than accumulated — which is what makes
-                # a session that missed messages correct again on the next one.
-                self._outstanding = dict(outstanding)
+        try:
+            async with self._lock:
+                self.last_active = time.monotonic()
+                message = await self._localize_turn(message)
+                outstanding = message.get("outstanding")
+                if isinstance(outstanding, dict):
+                    # Absolute, never a delta (agent-proxy API.md § The stream),
+                    # so it is replaced rather than accumulated — which is what
+                    # makes a session that missed messages correct again on the
+                    # next one.
+                    self._outstanding = dict(outstanding)
 
-            kind = message.get("type")
-            if kind == "ack":
-                # Claimed, then dropped: the ack exists to bind a ref to a turn
-                # id, and the ref is r2d2box's own bookkeeping rather than
-                # anything a client needs. What
-                # the client does need — what was asked — goes out as
-                # `turn_prompt` from inside here.
-                await self._claim_turn(message)
-                return
-            if kind == "error":
-                self._reject_pending_submit(message)
+                kind = message.get("type")
+                if kind == "ack":
+                    # Claimed, then dropped: the ack exists to bind a ref to a
+                    # turn id, and the ref is r2d2box's own bookkeeping rather
+                    # than anything a client needs. What
+                    # the client does need — what was asked — goes out as
+                    # `turn_prompt` from inside here.
+                    await self._claim_turn(message)
+                    return
+                if kind == "error":
+                    self._reject_pending_submit(message)
 
-            envelope = self._forward(message)
-            self._record(envelope)
-            await self._broadcast_locked(envelope)
-            await self._retire_finished_turn(envelope)
+                envelope = self._forward(message)
+                self._record(envelope)
+                await self._broadcast_locked(envelope)
+                await self._retire_finished_turn(envelope)
+        finally:
+            # In a `finally` because the `ack` path returns early and still
+            # opens a turn. An ack nobody is waiting on — a submit whose caller
+            # timed out — is the one message that can start work with no submit
+            # in flight to have raised the signal already.
+            await self._settle_activity()
 
     async def _localize_turn(self, message: dict[str, Any]) -> dict[str, Any]:
         """The message with its `turn.id` replaced by this conversation's own id.
@@ -704,6 +776,7 @@ class Session:
                 "returncode": proxy.returncode,
                 **self._envelope(),
             })
+        await self._settle_activity()
 
     async def _end_turn_locked(self, turn_id: str, reason: str) -> None:
         """Finish an open turn the process never finished, and store it.
@@ -758,6 +831,47 @@ class Session:
                     self.topic, self.name, result,
                 )
                 self._subscribers.discard(subscriber)
+
+    async def _settle_activity(self) -> None:
+        """Tell the host if this session has crossed between working and idle.
+
+        Called after anything that can change `active`, and never while `_lock`
+        is held. The callback is the host's own code — a database write, very
+        likely — and the read pump does wait for it, the way `submit` waits for
+        `build_prompt`. What holding `_lock` across it would add is that
+        `attach`, `status` and every other session-lock caller waited too, for
+        no gain: nothing this reads needs that lock.
+
+        `active` is sampled here rather than passed in, under a lock of its own.
+        That is what makes the signal level-triggered: edges are delivered in
+        the order they happened, and a flicker that starts and finishes while a
+        slow callback is running collapses to nothing instead of arriving
+        backwards. What the host is told is the truth at the moment it is told.
+
+        A callback that raises costs its own notification and nothing else — a
+        host's status hook must not be able to end a conversation. The one
+        thing it must not do is drive this session: `submit`, `close` and
+        `stop_process` all settle the signal themselves and would wait on the
+        lock this notification is holding.
+        """
+        if self._on_activity is None:
+            return
+        async with self._activity_lock:
+            active = self.active
+            if active == self._reported_active:
+                return
+            self._reported_active = active
+            try:
+                result = self._on_activity(self.topic, self.name, active)
+                if inspect.isawaitable(result):
+                    await result
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                _log.exception(
+                    "session %s/%s: the activity callback failed",
+                    self.topic, self.name,
+                )
 
     async def _assemble_prompt(self, text: str, context: Any) -> str:
         """What agent-proxy is asked, once the host's `build_prompt` hook has had `text`.

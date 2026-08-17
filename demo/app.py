@@ -71,10 +71,23 @@ def build_prompt(topic: str, session: str, text: str, context) -> str:
     return f"[the reader is looking at: {context}]\n\n{text}"
 
 
+def on_activity(topic: str, session: str, active: bool) -> None:
+    """Say on the console when a conversation starts working and when it stops.
+
+    This is the server's own busy light, and nothing about it reaches the
+    browser — the box already knows, from the turn it is watching. A real host
+    writes it somewhere it can act on: the row it keeps for the conversation,
+    so a list of them can show which are running. The demo keeps no such list,
+    so it prints.
+    """
+    print(f"[r2d2box] {topic}/{session} is {'working' if active else 'idle'}", flush=True)
+
+
 box = R2D2Box(
     agent_config,
     build_prompt=build_prompt,
     opening_prompt=opening_prompt,
+    on_activity=on_activity,
     store=FileTranscriptStore(TRANSCRIPTS),
     idle_timeout_s=10 * 60,
 )

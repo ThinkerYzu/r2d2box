@@ -42,7 +42,7 @@ from .host import (
     OpeningPrompt,
 )
 from .proxy import ProxyStartError
-from .session import BuildPrompt, Session, SubmitRejected
+from .session import ActivityCallback, BuildPrompt, Session, SubmitRejected
 from .store import TranscriptStore
 
 _log = logging.getLogger(__name__)
@@ -354,6 +354,7 @@ class R2D2Box:
         host: AgentHost | None = None,
         build_prompt: BuildPrompt | None = None,
         opening_prompt: OpeningPrompt | None = None,
+        on_activity: ActivityCallback | None = None,
         store: TranscriptStore | None = None,
         idle_timeout_s: float = DEFAULT_IDLE_TIMEOUT_S,
         pending_evict_cap_s: float = DEFAULT_PENDING_EVICT_CAP_S,
@@ -373,6 +374,7 @@ class R2D2Box:
                 agent_config,
                 build_prompt=build_prompt,
                 opening_prompt=opening_prompt,
+                on_activity=on_activity,
                 store=store,
                 idle_timeout_s=idle_timeout_s,
                 pending_evict_cap_s=pending_evict_cap_s,

@@ -17,7 +17,7 @@ import asyncio
 import pytest
 from fastapi import FastAPI
 
-from r2d2box import AgentConfig, MemoryTranscriptStore, R2D2Box
+from r2d2box import AgentConfig, MemoryTranscriptStore, ProxyStartError, R2D2Box
 
 from asgi_client import request, websocket
 from fake_proxy import FakeHost, FakeProxy, wait_until
@@ -640,6 +640,28 @@ async def test_a_box_needs_exactly_one_of_a_config_callback_and_a_host():
         R2D2Box()
     with pytest.raises(ValueError, match="either an agent_config"):
         R2D2Box(lambda topic, name: AgentConfig(), host=FakeHost())
+
+
+async def test_a_box_that_builds_its_own_host_passes_the_activity_signal_on(tmp_path):
+    """The callback is the host's, so it has to survive `R2D2Box` constructing one.
+
+    A spawn that cannot happen is enough to prove the wiring: the signal goes
+    up when the submit starts and back down when it fails, with no process ever
+    running.
+    """
+    edges = []
+    box = R2D2Box(
+        lambda topic, name: AgentConfig(proxy_bin=str(tmp_path / "no-such-proxy")),
+        on_activity=lambda topic, name, active: edges.append((topic, name, active)),
+    )
+    try:
+        session = await box.host.session("bug-1", "s1")
+        with pytest.raises(ProxyStartError):
+            await session.submit("hello")
+    finally:
+        await box.aclose()
+
+    assert edges == [("bug-1", "s1", True), ("bug-1", "s1", False)]
 
 
 async def test_the_lifespan_runs_the_sweeper_and_closes_the_host(mounted):

@@ -23,7 +23,7 @@ from typing import Any
 
 from .config import AgentConfig
 from .proxy import AgentProxy
-from .session import BuildPrompt, Session
+from .session import ActivityCallback, BuildPrompt, Session
 from .store import MemoryTranscriptStore, SessionInfo, TranscriptStore
 
 _log = logging.getLogger(__name__)
@@ -66,6 +66,7 @@ class AgentHost:
         *,
         build_prompt: BuildPrompt | None = None,
         opening_prompt: OpeningPrompt | None = None,
+        on_activity: ActivityCallback | None = None,
         store: TranscriptStore | None = None,
         idle_timeout_s: float = DEFAULT_IDLE_TIMEOUT_S,
         pending_evict_cap_s: float = DEFAULT_PENDING_EVICT_CAP_S,
@@ -77,6 +78,7 @@ class AgentHost:
         self._agent_config = agent_config
         self._build_prompt = build_prompt
         self._opening_prompt = opening_prompt
+        self._on_activity = on_activity
         self._sessions: dict[tuple[str, str], Session] = {}
         self._lock = asyncio.Lock()
         self._sweeper: asyncio.Task[None] | None = None
@@ -158,6 +160,7 @@ class AgentHost:
             spawn=spawn,
             store=self.store,
             build_prompt=self._build_prompt,
+            on_activity=self._on_activity,
         )
 
     async def start_proxy(
