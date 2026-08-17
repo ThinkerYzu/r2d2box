@@ -28,11 +28,16 @@ async def host():
 
 
 async def run_one_turn(host: FakeHost, topic: str, name: str, text: str) -> str:
-    """Submit one prompt and let its turn finish; return what the agent replied."""
+    """Submit one prompt and let its turn finish; return the session's id for the turn.
+
+    The proxy plays the turn under its own id, which is the one it acked and
+    not the one `submit` returned — a session that has outlived a process has
+    renumbered the second away from the first.
+    """
     session = await host.session(topic, name)
     turn_id = await session.submit(text)
     proxy = host.proxies[(topic, name)]
-    await proxy.run_turn(turn_id, text=f"answer to {text}")
+    await proxy.run_turn(proxy.acked[-1], text=f"answer to {text}")
     await proxy.drain()
     return turn_id
 

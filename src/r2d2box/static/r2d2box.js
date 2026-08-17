@@ -185,6 +185,7 @@
     this.id = id;
     this.kind = kind || 'user';
     this.doc = box.doc;
+    this.ended = false;
     this.promptEl = null;
     this.rawMarkdown = '';
     this.contentEl = null;
@@ -350,6 +351,7 @@
 
   /** Mark the turn finished, and say so when it failed. */
   TurnView.prototype.end = function (message) {
+    this.ended = true;
     this.el.classList.add('r2d2-turn-ended');
     if (message.outcome === 'error') {
       this.el.classList.add('r2d2-turn-failed');
@@ -662,9 +664,18 @@
     return open.length === 1 ? this.turns[open[0]] : null;
   };
 
-  /** This turn's view, created and appended if this is the first word of it. */
+  /**
+   * This turn's view, created and appended if this is the first word of it.
+   *
+   * An id whose turn has already ended starts a *new* view rather than
+   * reopening the old one. Turn ids are unique per conversation, but a
+   * transcript written before they were can repeat one, and drawing the second
+   * turn into the first silently loses its question — `setPrompt` will not
+   * overwrite a prompt already on screen.
+   */
   Box.prototype.turnFor = function (id, kind) {
     var turn = this.turns[id];
+    if (turn && turn.ended) turn = null;
     if (!turn) {
       turn = new TurnView(this, id, kind);
       this.turns[id] = turn;

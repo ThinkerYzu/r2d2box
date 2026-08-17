@@ -496,11 +496,24 @@ client also carry `seq`; messages aimed at one connection carry
 | `session_closed` | r2d2box | this conversation is over; the last message a session sends |
 
 Forwarded messages are agent-proxy's own, unchanged, with an envelope added —
-see agent-proxy's own `API.md § Message types` for their fields. Two
-of its fields cannot survive as they are: agent-proxy's `seq` restarts at 1 with
-every process, so it is preserved as `proxy_seq`, and `ref` is r2d2box's
-internal correlation token and is dropped. `ack` and `ready` are not forwarded
-at all.
+see agent-proxy's own `API.md § Message types` for their fields. Three of its
+fields cannot survive as they are. `ref` is r2d2box's internal correlation
+token and is dropped. The other two are numbered per process, and a session
+outlives its process, so both are renumbered for the conversation and the
+proxy's own value is kept beside the new one:
+
+| agent-proxy's field | becomes | its own value is kept as |
+|---|---|---|
+| `seq` | the session's broadcast number | `proxy_seq` |
+| `turn.id` | the session's turn id | `proxy_turn_id` |
+
+So a turn id is yours to group by: it identifies one turn for the whole life of
+the conversation, and is never handed out again after that turn ends — not
+after an idle eviction, an agent that died, or a server restart, all of which
+put a fresh agent-proxy behind a session that is numbering from `t-1` again.
+Use `proxy_turn_id` only to match a turn against the agent's own log lines.
+
+`ack` and `ready` are not forwarded at all.
 
 An `attached` message looks like this:
 
@@ -704,7 +717,7 @@ process never sees, and nothing surfaces the divergence.
 
 | Today | After |
 |---|---|
-| `{role: …}` re-encoding of the message stream | forwarded messages with their turn ids intact — switch on `type` |
+| `{role: …}` re-encoding of the message stream | forwarded messages, each naming the turn it belongs to — switch on `type` |
 | a client-side set of outstanding background task ids | `task_ids` from `attached` and `status`; **delete the client-side set** |
 | `marked.parse()` output assigned straight to `innerHTML` | sanitized with DOMPurify first, always |
 | your own session picker and close button | still yours, on `GET /sessions/{topic}` and `box.attach` — `demo/index.html` shows the shape |

@@ -27,7 +27,7 @@ import asyncio
 import inspect
 import logging
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -128,6 +128,12 @@ class Session:
 
         self._seq = 0
         self._ref_counter = 0
+        # This conversation's own turn numbering, and the current process's
+        # turn ids translated into it. agent-proxy numbers turns per process,
+        # so both are needed for a session that outlives one; see
+        # `_localize_turn`. The counter is None until the store has been read.
+        self._turn_counter: int | None = None
+        self._proxy_turn_ids: dict[str, str] = {}
         # Submits still waiting for their `ack`, by the ref each carried.
         self._pending: dict[str, _PendingSubmit] = {}
         # Turns that have started and not ended, by turn id. A finished turn
@@ -383,6 +389,9 @@ class Session:
                 )
             self._proxy = proxy
             self.claude_session_id = proxy.session_id
+            # The new process numbers its turns from `t-1` again, so its ids
+            # mean nothing the old mapping can answer.
+            self._proxy_turn_ids.clear()
             self._pump = asyncio.create_task(
                 self._read_messages(proxy), name=f"r2d2box-pump-{self.topic}-{self.name}"
             )
@@ -422,9 +431,13 @@ class Session:
         The transcript is updated before the broadcast, so a client attaching
         while this runs sees the message either in its snapshot or on the wire,
         never neither and never twice.
+
+        `_localize_turn` runs first, so everything below this line — and every
+        turn id that leaves the session — is in this conversation's numbering.
         """
         async with self._lock:
             self.last_active = time.monotonic()
+            message = await self._localize_turn(message)
             outstanding = message.get("outstanding")
             if isinstance(outstanding, dict):
                 # Absolute, never a delta (agent-proxy API.md § The stream), so
@@ -448,6 +461,51 @@ class Session:
             self._record(envelope)
             await self._broadcast_locked(envelope)
             await self._retire_finished_turn(envelope)
+
+    async def _localize_turn(self, message: dict[str, Any]) -> dict[str, Any]:
+        """The message with its `turn.id` replaced by this conversation's own id.
+
+        The caller holds `_lock`. Runs before anything reads the turn id, so
+        every later step — the transcript, the broadcast, `_open_turns`, the id
+        `submit` returns — works in the session's numbering and never in
+        agent-proxy's. A message naming no turn passes through untouched.
+
+        agent-proxy numbers turns per process and restarts at `t-1` with every
+        respawn, so its ids collide inside a conversation that outlives a
+        process — which one deliberately does. The proxy's own id is kept as
+        `proxy_turn_id`, since it is what the agent's log lines say.
+        """
+        turn = message.get("turn")
+        if not isinstance(turn, dict) or not isinstance(turn.get("id"), str):
+            return message
+        proxy_turn_id = turn["id"]
+        localized = dict(message)
+        localized["turn"] = {**turn, "id": await self._turn_id_for(proxy_turn_id)}
+        localized["proxy_turn_id"] = proxy_turn_id
+        return localized
+
+    async def _turn_id_for(self, proxy_turn_id: str) -> str:
+        """This session's id for one of the current process's turns, minted on first sight.
+
+        The caller holds `_lock`. The same `proxy_turn_id` gives the same
+        answer for as long as the process lives, and `_ensure_started` clears
+        the mapping when one is replaced, so the next `t-1` is a new turn
+        rather than the old one.
+
+        The counter cannot start at zero for a session rebuilt over a stored
+        transcript — a host that restarted would mint ids the store already
+        holds — so the first mint seeds it from what was stored.
+        """
+        known = self._proxy_turn_ids.get(proxy_turn_id)
+        if known is not None:
+            return known
+        if self._turn_counter is None:
+            stored = await self._store.read_turns(self.topic, self.name)
+            self._turn_counter = _highest_turn_number(stored)
+        self._turn_counter += 1
+        minted = f"t-{self._turn_counter}"
+        self._proxy_turn_ids[proxy_turn_id] = minted
+        return minted
 
     def _forward(self, message: dict[str, Any]) -> dict[str, Any]:
         """agent-proxy's message with r2d2box's envelope on it, ready to send.
@@ -799,6 +857,21 @@ def _turn_id(message: dict[str, Any]) -> str | None:
         return None
     turn_id = turn.get("id")
     return turn_id if isinstance(turn_id, str) else None
+
+
+def _highest_turn_number(turns: Iterable[Turn]) -> int:
+    """The largest N among turn ids shaped `t-N`, or 0 when none is.
+
+    Seeds a session's turn numbering from the transcript it is resuming, so
+    the next id it mints is one the store does not already hold. An id of any
+    other shape is ignored rather than guessed at: it cannot be continued, and
+    counting it would only move the collision somewhere else.
+    """
+    highest = 0
+    for turn in turns:
+        if turn.id.startswith("t-") and turn.id[2:].isdigit():
+            highest = max(highest, int(turn.id[2:]))
+    return highest
 
 
 def _turn_kind(message: dict[str, Any]) -> str | None:

@@ -32,8 +32,13 @@ class FakeProxy:
 
     `session_id`, `alive`, `returncode`, `submit`, `request_status`,
     `messages()` and `close()` all behave as the real thing's do — a session
-    cannot tell the two apart. What is extra is `emit`, `end_stream`, and the
-    `submits` list recording everything written to it.
+    cannot tell the two apart. What is extra is `emit`, `end_stream`, the
+    `submits` list recording everything written to it, and the `acked` list of
+    turn ids it has minted.
+
+    Turn ids restart at `t-1` for every new `FakeProxy`, exactly as
+    agent-proxy's do, which is what makes a session outliving its process
+    testable at all.
     """
 
     def __init__(
@@ -47,6 +52,11 @@ class FakeProxy:
         self.submits: list[dict[str, Any]] = []
         self.closed = False
         self.auto_ack = auto_ack
+        # Every turn id this process has acknowledged, in order. A test drives
+        # `run_turn` from here rather than from what `submit` returned: the
+        # session renumbers turns into its own sequence, and the two only
+        # coincide while one process has served the whole conversation.
+        self.acked: list[str] = []
 
         self._queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
         self._seq = 1  # `ready` was seq 1 and is consumed before a session sees us
@@ -129,6 +139,7 @@ class FakeProxy:
         if turn_id is None:
             self._turns += 1
             turn_id = f"t-{self._turns}"
+        self.acked.append(turn_id)
         await self.emit(
             {"type": "ack", "turn": {"id": turn_id, "kind": "user"}, "ref": ref}
         )

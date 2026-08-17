@@ -529,6 +529,57 @@ async def test_the_next_turn_after_an_eviction_resumes_the_conversation(fake_ses
     ]
 
 
+# ---- turn ids belong to the conversation ------------------------------------
+
+
+async def test_a_turn_after_a_restart_does_not_reuse_the_dead_process_id(fake_session):
+    """The bug this numbering exists for: two turns, one id, one conversation.
+
+    agent-proxy restarts at `t-1` with every process, so without renumbering
+    the second turn lands on top of the first — in the transcript, and in every
+    client that groups a turn's messages by its id.
+    """
+    session, spawner = fake_session()
+    first = await session.submit("what host is this?")
+    await spawner.latest.run_turn(spawner.latest.acked[-1], text="r2d2")
+    await spawner.latest.drain()
+    await session.stop_process()
+
+    second = await session.submit("and the kernel?")
+
+    assert spawner.proxies[1].acked == ["t-1"], "the new process did restart its numbering"
+    assert (first, second) == ("t-1", "t-2")
+    assert [turn["id"] for turn in (await session.snapshot())["turns"]] == ["t-1", "t-2"]
+
+
+async def test_a_session_rebuilt_over_a_transcript_numbers_past_it(fake_session):
+    """A host that restarted holds no counter — the store is what says where to carry on."""
+    store = MemoryTranscriptStore()
+    first_run, spawner = fake_session(store=store)
+    for text in ("first question", "second question"):
+        await first_run.submit(text)
+        await spawner.latest.run_turn(spawner.latest.acked[-1])
+        await spawner.latest.drain()
+    await first_run.close()
+
+    second_run, _ = fake_session(store=store)
+    assert await second_run.submit("after the restart") == "t-3"
+
+
+async def test_a_forwarded_message_keeps_the_proxys_own_turn_id(started_session):
+    """Renumbering costs the reader nothing: the agent's own id rides along."""
+    session, proxy, turn_id = await started_session()
+    subscriber = RecordingSubscriber()
+    await session.attach(subscriber)
+
+    await proxy.run_turn(proxy.acked[-1])
+    await proxy.drain()
+
+    started = subscriber.of_type("turn_start")[0]
+    assert started["turn"]["id"] == turn_id
+    assert started["proxy_turn_id"] == proxy.acked[-1]
+
+
 async def test_a_transient_resume_failure_is_retried_against_the_same_id(fake_session):
     """Dropping a good id on one bad spawn starts a second conversation over the first."""
     spawner = FakeSpawner(errors=(None, ProxyStartError("boom")))

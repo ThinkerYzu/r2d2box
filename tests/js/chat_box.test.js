@@ -274,6 +274,48 @@ test('a stored turn replays through the same rendering as a live one', () => {
   equal(textsOf(element, '.r2d2-tool-result'), ['one hit'], 'and the tool call it made');
 });
 
+test('a transcript that repeats a turn id draws both turns, not one', () => {
+  // What a conversation stored before turn ids were the session's own looks
+  // like: agent-proxy numbered turns per process, so the turn after a respawn
+  // is `t-1` again. Reusing the first turn's view would drop the second
+  // question entirely and run both answers together.
+  const stored = (user, answer) => ({
+    id: 't-1', kind: 'user', user, outcome: 'success',
+    events: [
+      { type: 'turn_start', turn: turn('t-1') },
+      { type: 'text', turn: turn('t-1'), text: answer },
+      { type: 'turn_end', turn: turn('t-1'), outcome: 'success' },
+    ],
+  });
+  const { element } = mountBox(Object.assign(fakeMarkdown(), {
+    transcript: [stored('before the restart', 'first answer'),
+                 stored('after the restart', 'second answer')],
+  }));
+
+  equal(textsOf(element, '.r2d2-message-user .r2d2-content'),
+    ['before the restart', 'after the restart'], 'both questions are on screen');
+  equal(element.querySelectorAll('.r2d2-markdown').map((el) => el.innerHTML),
+    ['<p>first answer</p>', '<p>second answer</p>'],
+    'and each answer is under its own question, not run together in one block');
+});
+
+test('a live turn reusing an ended turn id draws its own question', () => {
+  const { socket, element } = mountBox(fakeMarkdown());
+  const play = (from, question, answer) => {
+    socket.deliver(broadcast(from, { type: 'turn_prompt', turn: turn('t-1'), text: question }));
+    socket.deliver(broadcast(from + 1, { type: 'turn_start', turn: turn('t-1') }));
+    socket.deliver(broadcast(from + 2, { type: 'text', turn: turn('t-1'), text: answer }));
+    socket.deliver(broadcast(from + 3, { type: 'turn_end', turn: turn('t-1'), outcome: 'success' }));
+  };
+
+  play(1, 'before the restart', 'first answer');
+  socket.deliver(broadcast(5, { type: 'process_exited', code: 0 }));
+  play(6, 'after the restart', 'second answer');
+
+  equal(textsOf(element, '.r2d2-message-user .r2d2-content'),
+    ['before the restart', 'after the restart'], 'the second question was drawn too');
+});
+
 test('a turn still running when the client attaches leaves the composer blocked', () => {
   const { element } = mountBox({
     transcript: [{

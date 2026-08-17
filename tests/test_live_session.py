@@ -84,6 +84,9 @@ async def test_a_real_conversation_survives_losing_its_process(live_host):
     snapshot = await session.snapshot()
     assert len(snapshot["turns"]) == 2
     assert snapshot["turns"][0]["outcome"] == "success"
+    # Against the real thing, which numbers turns per process and hands the
+    # second one `t-1` again: a conversation numbers its turns once.
+    assert [turn["id"] for turn in snapshot["turns"]] == ["t-1", "t-2"]
 
     replies = [
         event.get("text", "")
