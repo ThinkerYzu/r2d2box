@@ -85,10 +85,15 @@ class _PendingSubmit:
     `text` is what the person typed, kept so the turn can be labelled with it
     the moment the ack claims a turn id — recording it after `submit` returns
     would race a turn that has already finished and gone to the store.
+
+    `by_host` says the text is the host application's own words instead, and
+    travels with it for the same reason: the turn it belongs to does not exist
+    yet.
     """
 
     text: str
     future: asyncio.Future[str]
+    by_host: bool = False
 
 
 class Session:
@@ -210,6 +215,20 @@ class Session:
         return len(self._open_turns)
 
     @property
+    def open_turns(self) -> list[Turn]:
+        """The turns that have started and not ended, oldest first.
+
+        The transcript's missing tail: everything up to the last `turn_end` is
+        in the store, and these are what has happened since. A caller listing
+        conversations reads them to describe one whose first turn is still
+        running, which the store cannot yet see.
+
+        The `Turn` objects are the live ones, still being appended to by the
+        read pump, not copies.
+        """
+        return sorted(self._open_turns.values(), key=lambda turn: turn.started_at)
+
+    @property
     def task_ids(self) -> set[str]:
         """Background `run_in_background` commands still running, by task id."""
         return set(self._task_ids)
@@ -232,6 +251,9 @@ class Session:
         unchanged, which is what an opening prompt does — it is the host's own
         words already, and running them through the host's own prompt
         assembler would wrap them in context meant for a person's question.
+        That is the whole meaning of the flag, so it also marks the turn
+        `by_host`, which keeps a host's opening out of the preview a session
+        listing carries.
 
         A session with an opening turn queues this behind it, so the
         conversation always starts where the host meant it to.
@@ -273,7 +295,9 @@ class Session:
             self._ref_counter += 1
             ref = f"r2d2-{self._ref_counter}"
             pending = _PendingSubmit(
-                text=text, future=asyncio.get_running_loop().create_future()
+                text=text,
+                future=asyncio.get_running_loop().create_future(),
+                by_host=not assemble,
             )
             self._pending[ref] = pending
             self.last_active = time.monotonic()
@@ -400,7 +424,7 @@ class Session:
         the order they happened in: a turn moves from `_open_turns` to the
         store at its `turn_end` and is never in both.
         """
-        running = sorted(self._open_turns.values(), key=lambda turn: turn.started_at)
+        running = self.open_turns
         return {
             **self._position(),
             "turns": [turn.to_dict() for turn in (*stored, *running)],
@@ -665,6 +689,7 @@ class Session:
         if pending is None:
             return
         turn.user = pending.text
+        turn.by_host = pending.by_host
         # Broadcast before waking the submitter, so `submit` returning means
         # every attached client has already been told what was asked. The other
         # order leaves the caller racing its own prompt onto the wire.

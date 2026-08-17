@@ -18,12 +18,13 @@ def store(request, tmp_path):
     return FileTranscriptStore(tmp_path / "transcripts")
 
 
-def a_turn(turn_id: str, user: str = "hello") -> Turn:
+def a_turn(turn_id: str, user: str = "hello", *, by_host: bool = False) -> Turn:
     """One finished turn, as a session would hand it to a store."""
     return Turn(
         id=turn_id,
         kind="user",
         user=user,
+        by_host=by_host,
         events=[{"type": "text", "turn": {"id": turn_id}, "text": "hi"}],
         ended_at=1000.0,
         outcome="success",
@@ -72,6 +73,49 @@ async def test_list_sessions_names_every_stored_session(store):
     assert await store.list_sessions("bug-3") == []
 
 
+async def test_list_sessions_counts_the_turns_of_each(store):
+    await store.append_turn("bug-1", "s1", a_turn("t-1"))
+    await store.append_turn("bug-1", "s1", a_turn("t-2"))
+    await store.append_turn("bug-1", "s2", a_turn("t-1"))
+
+    counts = {info.session: info.turns for info in await store.list_sessions("bug-1")}
+    assert counts == {"s1": 2, "s2": 1}
+
+
+async def test_list_sessions_previews_the_first_question(store):
+    await store.append_turn("bug-1", "s1", a_turn("t-1", "why does it crash?"))
+    await store.append_turn("bug-1", "s1", a_turn("t-2", "and on Wayland?"))
+
+    listed = await store.list_sessions("bug-1")
+    assert [info.preview for info in listed] == ["why does it crash?"]
+
+
+async def test_the_preview_skips_a_turn_the_host_submitted(store):
+    """A conversation opened by the host is labelled by the person, not the opening."""
+    await store.append_turn("bug-1", "s1", a_turn("t-1", "here is the bug", by_host=True))
+    await store.append_turn("bug-1", "s1", a_turn("t-2", "why does it crash?"))
+
+    listed = await store.list_sessions("bug-1")
+    assert [info.preview for info in listed] == ["why does it crash?"]
+    assert [info.turns for info in listed] == [2]
+
+
+async def test_a_conversation_with_only_a_host_turn_has_no_preview(store):
+    await store.append_turn("bug-1", "s1", a_turn("t-1", "here is the bug", by_host=True))
+
+    assert [info.preview for info in await store.list_sessions("bug-1")] == [None]
+
+
+async def test_the_preview_is_one_short_line(store):
+    await store.append_turn(
+        "bug-1", "s1", a_turn("t-1", "  why does\n\nit crash? " + "x" * 200)
+    )
+
+    (info,) = await store.list_sessions("bug-1")
+    assert info.preview.startswith("why does it crash? x")
+    assert len(info.preview) == 120
+
+
 async def test_clear_discards_one_session_and_leaves_the_rest(store):
     await store.append_turn("bug-1", "s1", a_turn("t-1"))
     await store.append_turn("bug-1", "s2", a_turn("t-1"))
@@ -102,6 +146,7 @@ def test_a_turn_written_by_an_older_version_still_loads():
     assert restored.id == "t-1"
     assert restored.kind == "user"
     assert restored.user is None
+    assert restored.by_host is False
     assert restored.outcome is None
 
 
@@ -161,6 +206,37 @@ async def test_a_corrupt_line_costs_one_turn_and_not_the_transcript(tmp_path):
         handle.write('{"id": "t-3", "user": "trunc')
 
     assert [t.user for t in await store.read_turns("bug-1", "s1")] == ["first", "second"]
+
+
+async def test_a_corrupt_line_is_still_counted_by_a_listing(tmp_path):
+    """The count is a line count, so it disagrees with `read_turns` by the bad line.
+
+    Documented rather than fixed: agreeing exactly would mean parsing every
+    line of every transcript under the topic each time a picker is drawn.
+    """
+    root = tmp_path / "transcripts"
+    store = FileTranscriptStore(root)
+    await store.append_turn("bug-1", "s1", a_turn("t-1", "first"))
+    path = root / _slug("bug-1") / f"{_slug('s1')}.jsonl"
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write('{"id": "t-2", "user": "trunc')
+
+    (info,) = await store.list_sessions("bug-1")
+    assert info.turns == 2
+    assert len(await store.read_turns("bug-1", "s1")) == 1
+
+
+async def test_a_listing_reads_past_a_corrupt_line_for_its_preview(tmp_path):
+    """A bad line is stepped over, not taken as the end of the search."""
+    root = tmp_path / "transcripts"
+    store = FileTranscriptStore(root)
+    await store.append_turn("bug-1", "s1", a_turn("t-1", "first"))
+    path = root / _slug("bug-1") / f"{_slug('s1')}.jsonl"
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    path.write_text(lines[0] + "{not json\n" + lines[1], encoding="utf-8")
+
+    (info,) = await store.list_sessions("bug-1")
+    assert info.preview == "first"
 
 
 async def test_a_transcript_outlives_the_store_object(tmp_path):

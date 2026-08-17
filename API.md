@@ -336,11 +336,20 @@ class TranscriptStore(ABC):
 A store holds *completed* turns; the turn in flight lives in the session until
 its `turn_end`. Reading a session that was never written is an empty list, not
 an error. A `Turn` carries `id`, `kind`, `user` (the text typed, or `None` for a
-turn nobody submitted), `events`, `started_at`, `ended_at` and `outcome`; its
-`to_dict()` is exactly what the `attached` message sends.
+turn nobody submitted), `by_host` (the text is your application's own words —
+an opening prompt — rather than a person's question), `events`, `started_at`,
+`ended_at` and `outcome`; its `to_dict()` is exactly what the `attached` message
+sends.
 
-If your session picker needs titles or tags, keep that metadata yourself
-alongside the store rather than subclassing one — r2d2box does not model it.
+`list_sessions` returns a `SessionInfo` per session: `session`, `last_active`,
+`turns` and `preview`, as `GET /sessions/{topic}` passes them on. The last two
+have defaults, so a store of your own may return the first two alone and list
+every conversation as empty and unlabelled. `preview_of(turns)` is the shipped
+stores' own helper, exported so yours can produce the same string.
+
+If your session picker needs more than that — titles, tags — keep that metadata
+yourself alongside the store rather than subclassing one; r2d2box does not model
+it.
 
 ### Below the router
 
@@ -376,7 +385,7 @@ turn_id = await session.submit("why does it crash?")
 | `await snapshot()` / `await status()` | the `attached` and `status` payloads |
 | `await report_error(text)` | broadcast a session-wide error of your own |
 | `active` | whether this session has any work in flight |
-| `turn_active`, `pending_turns`, `task_ids`, `process_alive`, `subscriber_count` | live state, derived rather than latched |
+| `turn_active`, `pending_turns`, `open_turns`, `task_ids`, `process_alive`, `subscriber_count` | live state, derived rather than latched |
 | `await stop_process()` / `await close()` / `await clear()` | evict the agent / end the session / discard the transcript |
 
 Two properties of `submit` shape everything above it. It returns when
@@ -681,13 +690,35 @@ For your own furniture, mounted under the same prefix:
 
 | Method | Path | Returns |
 |---|---|---|
-| `GET` | `/sessions/{topic}` | `{"topic": …, "sessions": [{"session": …, "last_active": …}]}`, newest first |
+| `GET` | `/sessions/{topic}` | `{"topic": …, "sessions": [{"session": …, "last_active": …, "turns": …, "preview": …}]}`, newest first |
 | `POST` | `/sessions/{topic}` | `{"topic": …, "session": …}`, 201; no process starts until a submit |
 | `DELETE` | `/sessions/{topic}/{session}` | `{"topic": …, "session": …, "existed": bool}` |
 
-`last_active` is epoch seconds. The listing covers both halves of a topic: a
-session whose transcript is on disk but whose process was evicted, and one
-created a moment ago that has not stored a turn yet.
+A `GET` gives you what a session picker needs without reading any transcripts:
+
+| Field | Is |
+|---|---|
+| `last_active` | epoch seconds |
+| `turns` | how many exchanges the conversation holds — turns, not the messages inside them |
+| `preview` | the first thing a **person** asked, on one line and cut to 120 characters, or `null` for a conversation nobody has spoken in yet |
+
+A turn your application submitted itself — an `opening_prompt`, or any
+`Session.submit(..., assemble=False)` — is never the preview. It is your words
+rather than a person's, and it would otherwise label every conversation with the
+same line. Transcripts written before r2d2box recorded this distinction preview
+their opening turn.
+
+The listing covers both halves of a topic and combines them per session: a
+conversation whose transcript is on disk but whose process was evicted, and one
+created a moment ago whose first turn is still running. `turns` counts the
+stored turns plus the running ones, and a session with nothing stored yet
+previews from the turn in flight.
+
+**What it costs.** `FileTranscriptStore` opens every transcript under the topic
+to count its turns, since one turn is one line. It never parses past the
+preview, so the cost is I/O rather than JSON. A topic holding many long
+conversations pays for its listing; if that is your shape, back `list_sessions`
+with a store that keeps the two numbers alongside the transcript.
 
 `DELETE` ends a conversation for good — it stops the agent and clears the
 transcript — and announces itself over the socket. Every attached client gets

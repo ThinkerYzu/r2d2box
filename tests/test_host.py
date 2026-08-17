@@ -188,6 +188,34 @@ async def test_list_sessions_survives_a_restart_through_the_store(tmp_path):
         await second.close()
 
 
+async def test_list_sessions_describes_a_conversation_from_both_halves(host):
+    """The store holds the finished turns and the session holds the running one."""
+    session = await host.session("bug-1", "s1")
+    await run_one_turn(host, "bug-1", "s1", "why does it crash?")
+    await session.submit("and on Wayland?")
+
+    (info,) = await host.list_sessions("bug-1")
+    assert info.turns == 2
+    assert info.preview == "why does it crash?"
+
+
+async def test_a_session_with_only_a_running_turn_is_still_described(host):
+    """Nothing is stored until `turn_end`, and a picker is drawn before then."""
+    session = await host.session("bug-1", "s1")
+    await session.submit("why does it crash?")
+
+    (info,) = await host.list_sessions("bug-1")
+    assert info.turns == 1
+    assert info.preview == "why does it crash?"
+
+
+async def test_a_session_with_nothing_said_in_it_has_no_preview(host):
+    await host.session("bug-1", "brand-new")
+
+    (info,) = await host.list_sessions("bug-1")
+    assert (info.turns, info.preview) == (0, None)
+
+
 async def test_list_sessions_puts_the_most_recent_first(host):
     await run_one_turn(host, "bug-1", "older", "one")
     await run_one_turn(host, "bug-1", "newer", "two")
@@ -431,6 +459,26 @@ async def test_the_opening_prompt_skips_the_build_prompt_hook():
         proxy = await opened_turn(host, "bug-1", "s1")
 
         assert proxy.submits[0]["text"] == "opening"
+    finally:
+        await host.close()
+
+
+async def test_a_listing_previews_the_person_and_not_the_hosts_opening():
+    """The opening is the same words in every conversation, so it labels none of them."""
+    host = FakeHost(opening_prompt=lambda topic, name: "You are helping with bug-1.")
+    try:
+        session = await host.session("bug-1", "s1")
+        proxy = await opened_turn(host, "bug-1", "s1")
+        await proxy.run_turn(proxy.acked[-1], text="ready")
+        await proxy.drain()
+
+        await session.submit("why does it crash?")
+        await proxy.run_turn(proxy.acked[-1], text="because of the resize")
+        await proxy.drain()
+
+        (info,) = await host.list_sessions("bug-1")
+        assert info.turns == 2
+        assert info.preview == "why does it crash?"
     finally:
         await host.close()
 

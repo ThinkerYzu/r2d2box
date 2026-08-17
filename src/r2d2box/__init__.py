@@ -23,6 +23,7 @@ from .store import (
     SessionInfo,
     TranscriptStore,
     Turn,
+    preview_of,
 )
 
 __all__ = [
@@ -43,4 +44,5 @@ __all__ = [
     "TranscriptStore",
     "Turn",
     "build_argv",
+    "preview_of",
 ]

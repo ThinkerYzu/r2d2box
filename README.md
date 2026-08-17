@@ -111,7 +111,7 @@ which drives an interactive `claude` over a pty and states turn boundaries
 explicitly — every message carries a turn id, a kind, and the outstanding
 user/unowned/background counts. That tool is not open source yet, so **this
 repository does not run end to end on its own today.** What does work without
-it is the whole test suite: 196 tests pass with neither binary installed,
+it is the whole test suite: 213 tests pass with neither binary installed,
 because every layer is tested against a stand-in for the one below it.
 
 ## Running the demo
@@ -139,7 +139,7 @@ await session.submit("why does it crash?")
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
-.venv/bin/pytest                             # 196 tests, ~1s; needs no `claude`
+.venv/bin/pytest                             # 213 tests, ~1s; needs no `claude`
 node tests/js/run.js                         # the front-end's 39, on their own
 R2D2BOX_RUN_LIVE=1 .venv/bin/pytest -m live  # 5 real conversations; needs agent-proxy and claude
 ```

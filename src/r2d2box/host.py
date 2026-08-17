@@ -24,7 +24,7 @@ from typing import Any
 from .config import AgentConfig
 from .proxy import AgentProxy
 from .session import ActivityCallback, BuildPrompt, Session
-from .store import MemoryTranscriptStore, SessionInfo, TranscriptStore
+from .store import MemoryTranscriptStore, SessionInfo, TranscriptStore, preview_of
 
 _log = logging.getLogger(__name__)
 
@@ -194,8 +194,10 @@ class AgentHost:
         This is what a host's session picker lists, so it
         has to cover both halves: a session whose transcript is on disk but
         whose process was evicted, and a session created a moment ago that has
-        not stored a turn yet. A session in both is reported once, with the
-        live `last_active`, which is the fresher of the two.
+        not stored a turn yet. A session in both is reported once, taking the
+        live `last_active`, which is the fresher of the two, and combining the
+        rest — the store holds the finished turns and the session holds the
+        ones still running, and a listing has to describe both.
         """
         by_name = {info.session: info for info in await self.store.list_sessions(topic)}
 
@@ -206,8 +208,16 @@ class AgentHost:
         now_epoch, now_monotonic = time.time(), time.monotonic()
         for session in self.live_sessions(topic):
             idle = now_monotonic - session.last_active
+            stored = by_name.get(session.name)
+            open_turns = session.open_turns
             by_name[session.name] = SessionInfo(
-                session=session.name, last_active=now_epoch - idle
+                session=session.name,
+                last_active=now_epoch - idle,
+                turns=(stored.turns if stored else 0) + len(open_turns),
+                # A conversation whose first question is still being answered
+                # has nothing stored to be labelled from, and is exactly when
+                # someone is most likely to be looking at the list.
+                preview=(stored.preview if stored else None) or preview_of(open_turns),
             )
         return sorted(by_name.values(), key=lambda info: info.last_active, reverse=True)
 

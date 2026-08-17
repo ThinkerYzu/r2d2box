@@ -599,6 +599,22 @@ async def test_deleting_a_session_tells_the_tab_still_watching_it(mounted):
         assert (closed["topic"], closed["session"]) == ("bug-1", "s1")
 
 
+async def test_a_listing_carries_what_a_picker_draws(mounted):
+    """A session id and a timestamp sort a list; these are what choose from it."""
+    app, box = mounted()
+
+    async with websocket(app, WS) as connection:
+        await attach(connection)
+        await connection.send_json({"type": "submit", "text": "what host is this?"})
+        await run_one_turn(box.host)
+
+    (entry,) = (await request(app, "GET", "/chat/sessions/bug-1")).json()["sessions"]
+    assert entry["session"] == "s1"
+    assert entry["turns"] == 1
+    assert entry["preview"] == "what host is this?"
+    assert entry["last_active"] > 0
+
+
 async def test_listing_a_topic_nobody_has_used_is_empty_rather_than_an_error(mounted):
     """A session picker asks about a bug before anyone has said anything about it."""
     app, box = mounted()

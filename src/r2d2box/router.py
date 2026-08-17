@@ -431,13 +431,23 @@ class R2D2Box:
 
         @self.router.get("/sessions/{topic}")
         async def list_sessions(topic: str) -> dict[str, Any]:
-            """Every session under `topic`, most recently active first."""
+            """Every session under `topic`, most recently active first.
+
+            Each entry carries enough to draw a picker without reading any
+            transcripts: how many turns the conversation has, and the first
+            thing a person asked in it.
+            """
             self.host.start_sweeper(self._sweep_interval_s)
             infos = await self.host.list_sessions(topic)
             return {
                 "topic": topic,
                 "sessions": [
-                    {"session": info.session, "last_active": info.last_active}
+                    {
+                        "session": info.session,
+                        "last_active": info.last_active,
+                        "turns": info.turns,
+                        "preview": info.preview,
+                    }
                     for info in infos
                 ],
             }

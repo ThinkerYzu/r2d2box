@@ -19,6 +19,7 @@ import re
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +38,15 @@ _SLUG_KEEP = re.compile(r"[^A-Za-z0-9._-]+")
 # used rather than the mangled form on disk.
 _META_MARKER = "r2d2box-transcript"
 
+# The longest a `SessionInfo.preview` may be. Long enough to tell two questions
+# apart in a list, short enough that listing a topic stays a small response
+# whatever was pasted into the box.
+_PREVIEW_LIMIT = 120
+
+# Collapses every run of whitespace in a preview to one space, so a pasted
+# stack trace becomes one line rather than the first line of one.
+_PREVIEW_SPACE = re.compile(r"\s+")
+
 
 @dataclass
 class Turn:
@@ -47,6 +57,11 @@ class Turn:
     may have prepended half a document to it, and the transcript should show
     what was asked. It is None for an unowned turn, which nobody submitted.
 
+    `by_host` marks a turn whose `user` text is the host application's own
+    words rather than a person's question — the turn a conversation opens with
+    is the one that happens. It is what keeps such a turn out of
+    `SessionInfo.preview`, where it would label every session identically.
+
     `events` are the forwarded messages with r2d2box's envelope already on
     them, so replaying a transcript to a client and
     watching one live deliver the same objects.
@@ -55,6 +70,7 @@ class Turn:
     id: str
     kind: str = "user"
     user: str | None = None
+    by_host: bool = False
     events: list[dict[str, Any]] = field(default_factory=list)
     started_at: float = field(default_factory=time.time)
     ended_at: float | None = None
@@ -72,6 +88,7 @@ class Turn:
             "id": self.id,
             "kind": self.kind,
             "user": self.user,
+            "by_host": self.by_host,
             "events": list(self.events),
             "started_at": self.started_at,
             "ended_at": self.ended_at,
@@ -83,12 +100,16 @@ class Turn:
         """Rebuild a turn from `to_dict`'s output, tolerating fields it lacks.
 
         Unknown keys are dropped and missing ones take their defaults, so a
-        transcript written by an older r2d2box still loads.
+        transcript written by an older r2d2box still loads. One default is
+        visible rather than merely safe: a turn written before `by_host`
+        existed reads as a person's, so a conversation stored back then previews
+        with whatever opened it.
         """
         return cls(
             id=str(data.get("id", "")),
             kind=str(data.get("kind", "user")),
             user=data.get("user"),
+            by_host=bool(data.get("by_host")),
             events=list(data.get("events") or []),
             started_at=float(data.get("started_at") or 0.0),
             ended_at=data.get("ended_at"),
@@ -98,10 +119,44 @@ class Turn:
 
 @dataclass(frozen=True)
 class SessionInfo:
-    """A stored session as the host's session picker needs to list it."""
+    """A stored session as the host's session picker needs to list it.
+
+    `turns` counts exchanges, not the messages inside them: one turn is one
+    line of a stored transcript, and it is what a person reading a list of
+    conversations counts. `preview` is the first thing a person asked in this
+    one, as `preview_of` trims it, or None for a conversation nobody has spoken
+    in yet.
+
+    Both carry defaults so a host's own `TranscriptStore` still constructs a
+    `SessionInfo` from the two fields that were here first; such a store lists
+    every session as empty and unlabelled until it fills them.
+    """
 
     session: str
     last_active: float
+    turns: int = 0
+    preview: str | None = None
+
+
+def preview_of(turns: Iterable[Turn]) -> str | None:
+    """A one-line label for a conversation: the first thing a person asked in it.
+
+    None until someone has asked something. Turns the host submitted itself are
+    skipped — a conversation that opens with a briefing would otherwise be
+    labelled with the same briefing as every other one — and so are turns with
+    no `user` text, which nobody submitted.
+
+    Whitespace is collapsed and the result cut to `_PREVIEW_LIMIT`, so a pasted
+    stack trace becomes a readable line rather than the first line of one and a
+    listing stays small whatever was typed.
+    """
+    for turn in turns:
+        if turn.by_host or not turn.user:
+            continue
+        text = _PREVIEW_SPACE.sub(" ", turn.user).strip()
+        if text:
+            return text[:_PREVIEW_LIMIT]
+    return None
 
 
 class TranscriptStore(ABC):
@@ -126,7 +181,13 @@ class TranscriptStore(ABC):
 
     @abstractmethod
     async def list_sessions(self, topic: str) -> list[SessionInfo]:
-        """Every session with a stored transcript under `topic`, most recent first."""
+        """Every session with a stored transcript under `topic`, most recent first.
+
+        This is what a session picker is drawn from, so an implementation is
+        expected to fill `turns` and `preview` as well — cheaply, since it is
+        called for a whole topic at once. Leaving them at their defaults costs
+        the picker its labels and nothing else.
+        """
 
     @abstractmethod
     async def clear(self, topic: str, session: str) -> None:
@@ -156,10 +217,14 @@ class MemoryTranscriptStore(TranscriptStore):
 
     async def list_sessions(self, topic: str) -> list[SessionInfo]:
         found = []
-        for stored_topic, session in self._turns:
+        for (stored_topic, session), turns in self._turns.items():
             if stored_topic == topic:
-                last_active = self._last_active.get((stored_topic, session), 0.0)
-                found.append(SessionInfo(session=session, last_active=last_active))
+                found.append(SessionInfo(
+                    session=session,
+                    last_active=self._last_active.get((stored_topic, session), 0.0),
+                    turns=len(turns),
+                    preview=preview_of(turns),
+                ))
         return sorted(found, key=lambda info: info.last_active, reverse=True)
 
     async def clear(self, topic: str, session: str) -> None:
@@ -182,7 +247,9 @@ class FileTranscriptStore(TranscriptStore):
     The file I/O runs on the event loop rather than in a thread. Appending one
     turn to a local file is a few hundred microseconds, and a host that needs
     better than that has somewhere other than a local disk in mind, which is
-    what the `TranscriptStore` interface is for.
+    what the `TranscriptStore` interface is for. `list_sessions` is the one
+    method that reads whole files — a turn count is a line count — so a topic
+    holding many long conversations pays for its listing in I/O.
     """
 
     def __init__(self, root: Path) -> None:
@@ -205,9 +272,15 @@ class FileTranscriptStore(TranscriptStore):
             return []
         found = []
         for path in directory.glob("*.jsonl"):
-            name = _read_session_name(path)
-            if name is not None:
-                found.append(SessionInfo(session=name, last_active=path.stat().st_mtime))
+            summary = _summarize_transcript(path)
+            if summary is not None:
+                name, turns, preview = summary
+                found.append(SessionInfo(
+                    session=name,
+                    last_active=path.stat().st_mtime,
+                    turns=turns,
+                    preview=preview,
+                ))
         return sorted(found, key=lambda info: info.last_active, reverse=True)
 
     async def clear(self, topic: str, session: str) -> None:
@@ -244,26 +317,70 @@ def _read_turns(path: Path) -> list[Turn]:
     return turns
 
 
-def _read_session_name(path: Path) -> str | None:
-    """The session id a transcript file was written for, or None if it has no header.
+def _summarize_transcript(path: Path) -> tuple[str, int, str | None] | None:
+    """One transcript file as a listing needs it: session id, turn count, preview.
 
-    Recovers the caller's original key from the metadata line, since the file
-    name is a slug the key cannot be reconstructed from. A file with no header
-    is not ours, and the caller skips it rather than guessing.
+    None for a file that is not ours. The header line is what says so, and the
+    session id it carries is the caller's original key — the slugged file name
+    is not something a key can be reconstructed from.
+
+    The whole file is read, because one turn is one line and a count of them has
+    to reach the end. What keeps that affordable is what is skipped: lines are
+    counted rather than parsed, and JSON is decoded only until the first turn a
+    person submitted turns up, which is usually the line straight after the
+    header. One consequence is worth knowing — a line too damaged for
+    `_read_turns` to parse still counts as a turn here, so a transcript
+    truncated by a killed process can report one turn more than it gives back.
+    Agreeing with it exactly would mean parsing every line of every transcript
+    under the topic each time a picker is drawn.
     """
     try:
         with path.open(encoding="utf-8") as handle:
-            first = handle.readline()
+            name = _session_name_of(handle.readline())
+            if name is None:
+                return None
+            turns = 0
+            preview = None
+            for line in handle:
+                if not line.strip():
+                    continue
+                turns += 1
+                if preview is None:
+                    turn = _turn_of_line(line)
+                    if turn is not None:
+                        preview = preview_of((turn,))
+            return name, turns, preview
     except OSError:
         return None
+
+
+def _session_name_of(header: str) -> str | None:
+    """The session id a transcript file's first line names, or None if it names none.
+
+    A file whose first line is not one of our metadata records is not ours, and
+    the caller skips it rather than guessing at a session id from the path.
+    """
     try:
-        record = json.loads(first)
+        record = json.loads(header)
     except json.JSONDecodeError:
         return None
     if record.get("type") != _META_MARKER:
         return None
     session = record.get("session")
     return session if isinstance(session, str) else None
+
+
+def _turn_of_line(line: str) -> Turn | None:
+    """One transcript line as a `Turn`, or None if it will not parse as one.
+
+    Used where a bad line is worth stepping over rather than reporting, which
+    `_read_turns` logs instead.
+    """
+    try:
+        record = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    return Turn.from_dict(record) if isinstance(record, dict) else None
 
 
 def _meta_record(topic: str, session: str) -> dict[str, Any]:
