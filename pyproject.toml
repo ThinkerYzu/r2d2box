@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "r2d2box"
-version = "0.0.0"
+version = "0.1.0"
 description = "An embeddable chat box for AI agents: a mountable agent host and the front-end panel that drives it."
 requires-python = ">=3.11"
 readme = "README.md"

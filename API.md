@@ -17,7 +17,11 @@ implementation got them wrong.
 
 ## Install
 
+Not from PyPI — from a release, from a tag, or from a checkout:
+
 ```bash
+pip install https://github.com/ThinkerYzu/r2d2box/releases/download/v0.1.0/r2d2box-0.1.0-py3-none-any.whl
+pip install 'git+https://github.com/ThinkerYzu/r2d2box@v0.1.0'
 pip install -e /path/to/r2d2box
 ```
 

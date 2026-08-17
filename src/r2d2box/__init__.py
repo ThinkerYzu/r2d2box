@@ -12,6 +12,8 @@ A host application needs `R2D2Box` and `AgentConfig`, plus a store; everything
 else here is for a caller reaching below the router on purpose.
 """
 
+from importlib.metadata import PackageNotFoundError, version as _installed_version
+
 from .config import DEFAULT_PROXY_BIN, AgentConfig, build_argv
 from .host import AgentHost
 from .proxy import STREAM_LIMIT, AgentProxy, ProxyStartError
@@ -25,6 +27,13 @@ from .store import (
     Turn,
     preview_of,
 )
+
+# pyproject.toml holds the only copy of the number; a source tree that was never
+# installed has no metadata to read it out of.
+try:
+    __version__ = _installed_version("r2d2box")
+except PackageNotFoundError:
+    __version__ = "0.0.0+unknown"
 
 __all__ = [
     "AgentConfig",

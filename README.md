@@ -1,5 +1,7 @@
 # r2d2box
 
+[![CI](https://github.com/ThinkerYzu/r2d2box/actions/workflows/ci.yml/badge.svg)](https://github.com/ThinkerYzu/r2d2box/actions/workflows/ci.yml)
+
 A chat box for AI agents, as a library: one server-side agent host and one
 front-end chat panel, so an app that wants to embed a live Claude agent doesn't
 have to build either.
@@ -141,7 +143,7 @@ python3 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
 .venv/bin/pytest                             # 213 tests, ~1s; needs no `claude`
 node tests/js/run.js                         # the front-end's 39, on their own
-R2D2BOX_RUN_LIVE=1 .venv/bin/pytest -m live  # 5 real conversations; needs agent-proxy and claude
+R2D2BOX_RUN_LIVE=1 .venv/bin/pytest -m live  # 6 real conversations; needs agent-proxy and claude
 ```
 
 Nothing in the default suite needs `claude`, and each layer is tested without
@@ -157,6 +159,44 @@ and `tests/js/minidom.js` is the same idea one layer higher, a DOM small enough
 to run the shipped `r2d2box.js` in under plain `node` — no browser, no jsdom,
 no package manager. `tests/test_chat_box.py` runs those from pytest and skips
 if `node` is missing.
+
+Every push and pull request runs the same two commands on Python 3.11 through
+3.14 — see [`.github/workflows/ci.yml`](.github/workflows/ci.yml). The runner
+has neither `agent-proxy` nor `claude` on it, which is the point: nothing in the
+default suite may come to depend on them. CI runs `node tests/js/run.js`
+separately from `pytest` because pytest *skips* the front-end tests when `node`
+is missing, and a silent skip of the whole browser half would leave the suite
+green.
+
+## Releasing
+
+A release is a tag. Pushing one named `vX.Y.Z` runs
+[`.github/workflows/release.yml`](.github/workflows/release.yml), which refuses
+the tag unless it matches `version` in `pyproject.toml`, runs both suites,
+builds the sdist and wheel, checks the front-end files are really inside the
+wheel, and creates the GitHub Release with both artifacts attached and notes
+generated from the commits since the last tag.
+
+```bash
+# bump `version` in pyproject.toml, commit and push it, then:
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+`r2d2box.__version__` comes from the installed metadata, so `pyproject.toml` is
+the only place the number is written and there is nothing for it to drift
+against.
+
+The wheel check is there because the browser half ships as package data rather
+than as Python modules: get that wrong and the wheel installs, imports, and
+mounts perfectly, then serves a 404 for every file the page asks for.
+
+Nothing goes to PyPI — r2d2box does not run without `agent-proxy`, which is not
+published either. Install a release from its artifact or straight from the tag:
+
+```bash
+pip install https://github.com/ThinkerYzu/r2d2box/releases/download/v0.1.0/r2d2box-0.1.0-py3-none-any.whl
+pip install 'git+https://github.com/ThinkerYzu/r2d2box@v0.1.0'
+```
 
 ## Documentation
 
