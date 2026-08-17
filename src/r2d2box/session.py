@@ -786,11 +786,20 @@ class Session:
         """
         if self._proxy is not proxy:
             return
+        self._fail_pending_submits(ConnectionError("agent-proxy exited"))
+        # Reap the process before announcing it: EOF on stdout is not the exit.
+        #
+        # The child closes stdout on its way out and is reaped some moments
+        # later, so `returncode` is still None when the read pump gets here.
+        # Announcing from that state sent `process_exited` with a null
+        # `returncode`, and told a client attaching right behind it that
+        # `process_alive` was true of a process already gone. `close` also
+        # finishes the stderr drain, which nothing else on this path does.
+        await proxy.close()
         _log.info(
             "session %s/%s: agent-proxy exited with %s",
             self.topic, self.name, proxy.returncode,
         )
-        self._fail_pending_submits(ConnectionError("agent-proxy exited"))
         async with self._lock:
             for turn_id in list(self._open_turns):
                 await self._end_turn_locked(turn_id, "agent-proxy exited")

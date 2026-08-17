@@ -111,6 +111,7 @@ class FakeProxy:
 
     async def close(self) -> None:
         self._alive = False
+        self.closed = True
         await self._queue.put(None)
 
     # ---- what a test drives it with ------------------------------------------
@@ -170,8 +171,14 @@ class FakeProxy:
         })
 
     async def end_stream(self) -> None:
-        """Close the stream as a dead process would: EOF, with no further messages."""
-        self._alive = False
+        """Close the stream as a dying process does: EOF first, still unreaped.
+
+        `alive` deliberately stays true until someone calls `close`. A real
+        child closes stdout on its way out and keeps a `returncode` of None
+        until the event loop reaps it, so a session that mistakes EOF for the
+        exit reports a live process to whoever attaches next. Flipping the flag
+        here would hide that, and did.
+        """
         await self._queue.put(None)
 
     async def drain(self, timeout_s: float = 5.0) -> None:

@@ -92,6 +92,21 @@ async def _wait_for_turn_end(session, turn_id: str, timeout_s: float = 5.0) -> N
     assert not session.pending_turns, f"turn {turn_id} never ended"
 
 
+async def _wait_for_process_gone(session, timeout_s: float = 5.0) -> None:
+    """Block until the session has finished with a process that exited on its own.
+
+    A script that ends by exiting writes its `turn_end` first, so
+    `_wait_for_turn_end` returns while the process is still on its way out.
+    Everything that follows — the EOF, the reap, `process_exited` — happens on
+    the read pump's task, and asserting on the process without waiting for it
+    is a coin toss.
+    """
+    deadline = asyncio.get_running_loop().time() + timeout_s
+    while session.process_alive and asyncio.get_running_loop().time() < deadline:
+        await asyncio.sleep(0.01)
+    assert session.process_alive is False, "the process never went away"
+
+
 async def test_two_sessions_under_one_topic_hold_independent_conversations(scripted_host):
     """Each session gets its own process, and neither transcript knows the other."""
     host = scripted_host("one-turn.jsonl")
@@ -121,7 +136,7 @@ async def test_a_killed_process_resumes_with_its_history(scripted_host, tmp_path
     # before the second prompt — the crash case, without having to kill anything.
     await run_turn(host, "bug-1", "s1", "first question")
     session = await host.session("bug-1", "s1")
-    assert session.process_alive is False
+    await _wait_for_process_gone(session)
     assert session.claude_session_id == "scripted-session-0001"
 
     await run_turn(host, "bug-1", "s1", "second question")
