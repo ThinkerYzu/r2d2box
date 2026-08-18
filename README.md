@@ -19,8 +19,9 @@ the Python API, the JavaScript API, the WebSocket messages, and what migrating
 an existing app involves.
 
 > **You need `agent-proxy`.** It is the only way r2d2box reaches an agent, and
-> it is a separate tool that is **not yet published** — so this repository does
-> not run on its own today. See [Requirements](#requirements).
+> it is a separate tool — published since 2026-08-17, installed from its tag:
+> `pip install 'git+https://github.com/ThinkerYzu/agent-proxy@v0.1.0'`. See
+> [Requirements](#requirements).
 
 ```python
 from pathlib import Path
@@ -103,18 +104,19 @@ left work behind.
 | Needs | Why | Where from |
 |---|---|---|
 | Python ≥ 3.11, `fastapi` ≥ 0.110 | the router you mount | pip, as this package's dependency |
-| `agent-proxy` on `$PATH` | **the only way r2d2box reaches an agent** | a separate tool, not yet published |
+| `agent-proxy` on `$PATH` | **the only way r2d2box reaches an agent** | [agent-proxy](https://github.com/ThinkerYzu/agent-proxy), `pip install 'git+https://github.com/ThinkerYzu/agent-proxy@v0.1.0'` |
 | `claude` on `$PATH` | what agent-proxy drives | Claude Code |
 | `uvicorn[standard]` | a plain `uvicorn` serves no WebSocket | pip, for the demo or your own server |
 
 **About agent-proxy.** r2d2box does not spawn `claude` itself, does not speak
-`stream-json`, and adds nothing to the turn protocol. It sits on agent-proxy,
-which drives an interactive `claude` over a pty and states turn boundaries
-explicitly — every message carries a turn id, a kind, and the outstanding
-user/unowned/background counts. That tool is not open source yet, so **this
-repository does not run end to end on its own today.** What does work without
-it is the whole test suite: 213 tests pass with neither binary installed,
-because every layer is tested against a stand-in for the one below it.
+`stream-json`, and adds nothing to the turn protocol. It sits on
+[agent-proxy](https://github.com/ThinkerYzu/agent-proxy), which drives an
+interactive `claude` over a pty and states turn boundaries explicitly — every
+message carries a turn id, a kind, and the outstanding user/unowned/background
+counts. Its [API.md](https://github.com/ThinkerYzu/agent-proxy/blob/master/API.md)
+is the contract everything here is built on. What runs without either binary is
+the whole test suite: 213 tests pass with neither installed, because every layer
+is tested against a stand-in for the one below it.
 
 ## Running the demo
 
@@ -190,8 +192,10 @@ The wheel check is there because the browser half ships as package data rather
 than as Python modules: get that wrong and the wheel installs, imports, and
 mounts perfectly, then serves a 404 for every file the page asks for.
 
-Nothing goes to PyPI — r2d2box does not run without `agent-proxy`, which is not
-published either. Install a release from its artifact or straight from the tag:
+Nothing goes to PyPI — r2d2box does not run without `agent-proxy`, which is
+released on GitHub rather than PyPI for the same reason: it does nothing without
+a `claude` binary it cannot declare as a dependency. Install a release from its
+artifact or straight from the tag:
 
 ```bash
 pip install https://github.com/ThinkerYzu/r2d2box/releases/download/v0.1.0/r2d2box-0.1.0-py3-none-any.whl

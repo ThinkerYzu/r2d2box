@@ -29,11 +29,12 @@ Two things have to be on the machine that r2d2box does not install:
 
 | Needs | Why | Where from |
 |---|---|---|
-| `agent-proxy` on `$PATH` | the only way r2d2box reaches an agent | a separate tool, not yet published |
+| `agent-proxy` on `$PATH` | the only way r2d2box reaches an agent | [agent-proxy](https://github.com/ThinkerYzu/agent-proxy), `pip install 'git+https://github.com/ThinkerYzu/agent-proxy@v0.1.0'` |
 | `claude` on `$PATH` | what agent-proxy drives | Claude Code |
 
-**agent-proxy is not open source yet**, so r2d2box does not run end to end
-without it. Everything below describes the API as built and tested; the test
+**agent-proxy is a separate install**, from its own tag rather than PyPI, and
+r2d2box does not run end to end without it. Everything below describes the API
+as built and tested; the test
 suite itself needs neither binary.
 
 The browser half ships **inside** the Python package and is served by the router
