@@ -26,6 +26,14 @@ pytestmark = pytest.mark.live
 
 TURN_TIMEOUT_S = 240
 
+# Mirrors agent-proxy's own live fixture for the same scenario, so this test
+# and the one that added `command`/`output` there watch the same command run.
+BACKGROUND_TASK_PROMPT = (
+    "Use the Bash tool with run_in_background set to true to start exactly "
+    "this command: sleep 2; echo finished. Do not wait for it to finish. "
+    "Then reply with exactly: STARTED"
+)
+
 
 @pytest.fixture
 async def live_host(require_agent_proxy, tmp_path):  # noqa: F811  (the imported fixture)
@@ -149,3 +157,29 @@ async def test_both_attached_clients_see_a_real_turn(live_host):
     # `seq` numbers the broadcasts and nothing else, so two clients that
     # attached at different moments still read the same numbers off the turn.
     assert [m["seq"] for m in first.messages[1:]] == [m["seq"] for m in second.messages[1:]]
+
+
+async def test_a_background_tasks_command_and_output_reach_the_client(live_host):
+    """`task_start.command` and `task_end.output`, forwarded from a real agent-proxy.
+
+    `_forward` copies a message's fields rather than re-encoding them, so
+    nothing here had to change for agent-proxy's own newest task fields to
+    reach a client — this exists to prove that promise still holds against a
+    real process, not just the fixtures, which is the only way `_forward`'s
+    generality is actually exercised for a field this project never named.
+    """
+    session = await live_host.session("live-topic", "s1")
+    subscriber = RecordingSubscriber()
+    await session.attach(subscriber)
+
+    await run_turn(session, BACKGROUND_TASK_PROMPT)
+
+    deadline = asyncio.get_running_loop().time() + TURN_TIMEOUT_S
+    while "task_end" not in subscriber.types() and asyncio.get_running_loop().time() < deadline:
+        await asyncio.sleep(0.2)
+
+    start = subscriber.of_type("task_start")[0]
+    assert "sleep" in (start.get("command") or ""), start
+
+    end = subscriber.of_type("task_end")[0]
+    assert "finished" in (end.get("output") or ""), end
