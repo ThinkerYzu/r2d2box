@@ -18,7 +18,7 @@ from .config import DEFAULT_PROXY_BIN, AgentConfig, build_argv
 from .host import AgentHost
 from .proxy import STREAM_LIMIT, AgentProxy, ProxyStartError
 from .router import DEFAULT_CLIENT_QUEUE_LIMIT, R2D2Box
-from .session import Session, SubmitRejected, Subscriber
+from .session import ENDLESS_TASK_KINDS, Session, SubmitRejected, Subscriber
 from .store import (
     FileTranscriptStore,
     MemoryTranscriptStore,
@@ -41,6 +41,7 @@ __all__ = [
     "AgentProxy",
     "DEFAULT_CLIENT_QUEUE_LIMIT",
     "DEFAULT_PROXY_BIN",
+    "ENDLESS_TASK_KINDS",
     "FileTranscriptStore",
     "MemoryTranscriptStore",
     "ProxyStartError",

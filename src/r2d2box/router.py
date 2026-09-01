@@ -34,9 +34,11 @@ from fastapi import APIRouter, FastAPI, WebSocket, WebSocketDisconnect
 from starlette.staticfiles import StaticFiles
 
 from .host import (
+    DEFAULT_ENDLESS_EVICT_CAP_S,
     DEFAULT_IDLE_TIMEOUT_S,
     DEFAULT_PENDING_EVICT_CAP_S,
     DEFAULT_SWEEP_INTERVAL_S,
+    DEFAULT_TASK_EVICT_CAP_S,
     AgentConfigCallback,
     AgentHost,
     OpeningPrompt,
@@ -358,6 +360,8 @@ class R2D2Box:
         store: TranscriptStore | None = None,
         idle_timeout_s: float = DEFAULT_IDLE_TIMEOUT_S,
         pending_evict_cap_s: float = DEFAULT_PENDING_EVICT_CAP_S,
+        task_evict_cap_s: float = DEFAULT_TASK_EVICT_CAP_S,
+        endless_evict_cap_s: float | None = DEFAULT_ENDLESS_EVICT_CAP_S,
         sweep_interval_s: float = DEFAULT_SWEEP_INTERVAL_S,
         static_dir: Path | None = None,
         client_queue_limit: int = DEFAULT_CLIENT_QUEUE_LIMIT,
@@ -378,6 +382,8 @@ class R2D2Box:
                 store=store,
                 idle_timeout_s=idle_timeout_s,
                 pending_evict_cap_s=pending_evict_cap_s,
+                task_evict_cap_s=task_evict_cap_s,
+                endless_evict_cap_s=endless_evict_cap_s,
             )
 
         self._sweep_interval_s = sweep_interval_s

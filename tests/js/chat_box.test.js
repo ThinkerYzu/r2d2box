@@ -217,6 +217,77 @@ test('the task set comes from the server and is replaced, never accumulated', ()
     'the server says nothing is outstanding, so nothing is');
 });
 
+test('a monitor never blocks the composer, however long it watches', () => {
+  // the input would otherwise be disabled for the rest of the
+  // conversation, since a monitor ends only when something stops it.
+  const { socket, element } = mountBox();
+  const input = element.querySelector('.r2d2-input');
+
+  socket.deliver(broadcast(1, { type: 'turn_start', turn: turn('t-1') }));
+  socket.deliver(broadcast(2, {
+    type: 'task_start', turn: turn('t-1'), task: { id: 'mon_1', kind: 'monitor' },
+  }));
+  socket.deliver(broadcast(3, { type: 'turn_end', turn: turn('t-1'), outcome: 'success' }));
+
+  ok(!input.disabled, 'the watch is running and the person can still type');
+  equal(textsOf(element, '.r2d2-status-text'), [], 'and nothing claims to be waiting');
+});
+
+test('a subagent blocks the composer the way a shell command does', () => {
+  const { socket, element } = mountBox();
+  const input = element.querySelector('.r2d2-input');
+
+  socket.deliver(broadcast(1, { type: 'turn_start', turn: turn('t-1') }));
+  socket.deliver(broadcast(2, {
+    type: 'task_start', turn: turn('t-1'), task: { id: 'sub_1', kind: 'agent' },
+  }));
+  socket.deliver(broadcast(3, { type: 'turn_end', turn: turn('t-1'), outcome: 'success' }));
+
+  ok(input.disabled, 'a subagent is work that ends, so the input waits for it');
+});
+
+test('a monitor beside a shell command still lets the shell command block', () => {
+  const { socket, element } = mountBox();
+  const input = element.querySelector('.r2d2-input');
+
+  socket.deliver(broadcast(1, { type: 'task_start', task: { id: 'mon_1', kind: 'monitor' } }));
+  socket.deliver(broadcast(2, { type: 'task_start', task: { id: 'bash_3', kind: 'shell' } }));
+  ok(input.disabled, 'blocked by the command, not by the watch');
+
+  socket.deliver(broadcast(3, { type: 'task_end', task: { id: 'bash_3' }, exit_code: 0 }));
+  ok(!input.disabled, 'the command finishing frees it, with the watch still running');
+});
+
+test('the task kinds come from the server state, not only from the stream', () => {
+  const { socket, element } = mountBox();
+  socket.deliver(broadcast(1, { type: 'task_start', task: { id: 'bash_3' } }));
+  ok(element.querySelector('.r2d2-input').disabled, 'blocked by the task it saw start');
+
+  socket.deliver({
+    type: 'status', topic: 'bug-1992198', session: 's1', seq: 1,
+    turn_active: false, turn_ids: [], task_ids: ['mon_1'],
+    tasks: [{ id: 'mon_1', kind: 'monitor' }], process_alive: true,
+  });
+
+  ok(!element.querySelector('.r2d2-input').disabled,
+    'the only thing outstanding is a watch, so the input is free');
+});
+
+test('a server that sends no kinds leaves every task blocking, as it always did', () => {
+  const { socket, element } = mountBox();
+  // One broadcast first, so the `status` below does not read as a `seq` gap
+  // and send the box off to re-attach instead of applying the state.
+  socket.deliver(broadcast(1, { type: 'task_start', task: { id: 'bash_3' } }));
+  socket.deliver({
+    type: 'status', topic: 'bug-1992198', session: 's1', seq: 1,
+    turn_active: false, turn_ids: [], task_ids: ['bash_3'], process_alive: true,
+  });
+
+  ok(element.querySelector('.r2d2-input').disabled,
+    'no kinds means the old vocabulary, where every task was a shell command');
+});
+
+
 test('submitting sends the text and clears the input without drawing anything', () => {
   const { socket, element, box } = mountBox();
   const input = element.querySelector('.r2d2-input');

@@ -37,7 +37,11 @@ READY_SESSION_ID = "scripted-session-0001"
 
 # Mirrors agent-proxy's envelope: `outstanding` is on every message, absolute
 # rather than a delta. Fixtures that do not care about the counts get this.
-_IDLE_COUNTS = {"user": 0, "unowned": 0, "background": 0}
+#
+# All five counts, because agent-proxy emits all five. A stand-in with a
+# narrower vocabulary than the real thing is how a client that hard-codes the
+# key list passes its own tests.
+_IDLE_COUNTS = {"user": 0, "unowned": 0, "background": 0, "monitor": 0, "agent": 0}
 
 
 def main(argv: list[str]) -> int:

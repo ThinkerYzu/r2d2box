@@ -23,13 +23,18 @@ from typing import Any
 
 from .config import AgentConfig
 from .proxy import AgentProxy
-from .session import ActivityCallback, BuildPrompt, Session
+from .session import ENDLESS_TASK_KINDS, ActivityCallback, BuildPrompt, Session
 from .store import MemoryTranscriptStore, SessionInfo, TranscriptStore, preview_of
 
 _log = logging.getLogger(__name__)
 
 DEFAULT_IDLE_TIMEOUT_S = 20 * 60
 DEFAULT_PENDING_EVICT_CAP_S = 4 * 60 * 60
+DEFAULT_TASK_EVICT_CAP_S = 4 * 60 * 60
+# No deadline for a session whose work is not expected to end — see
+# `session.ENDLESS_TASK_KINDS`. A host that would rather bound the process a
+# long-lived monitor holds passes a number instead.
+DEFAULT_ENDLESS_EVICT_CAP_S: float | None = None
 DEFAULT_SWEEP_INTERVAL_S = 60
 
 # Returns the `AgentConfig` for one session, and is called at every spawn
@@ -70,10 +75,14 @@ class AgentHost:
         store: TranscriptStore | None = None,
         idle_timeout_s: float = DEFAULT_IDLE_TIMEOUT_S,
         pending_evict_cap_s: float = DEFAULT_PENDING_EVICT_CAP_S,
+        task_evict_cap_s: float = DEFAULT_TASK_EVICT_CAP_S,
+        endless_evict_cap_s: float | None = DEFAULT_ENDLESS_EVICT_CAP_S,
     ) -> None:
         self.store = store if store is not None else MemoryTranscriptStore()
         self.idle_timeout_s = idle_timeout_s
         self.pending_evict_cap_s = pending_evict_cap_s
+        self.task_evict_cap_s = task_evict_cap_s
+        self.endless_evict_cap_s = endless_evict_cap_s
 
         self._agent_config = agent_config
         self._build_prompt = build_prompt
@@ -270,11 +279,9 @@ class AgentHost:
         `submit` resumes the conversation with `--resume` and the client never
         learns it happened.
 
-        A session with a turn still running is spared until
-        `pending_evict_cap_s`, because a turn runs on with nobody listening and
-        nothing refreshes `last_active` while it does. The cap is what stops
-        that exemption becoming permanent: a turn whose
-        `turn_end` never arrives would otherwise make its session immortal.
+        A session with work still outstanding is spared for longer, because
+        `last_active` only moves when agent-proxy says something and work that
+        has gone quiet says nothing. How much longer is `_evict_cap` below.
         """
         now = time.monotonic()
         due = []
@@ -285,14 +292,18 @@ class AgentHost:
                 idle = now - session.last_active
                 if idle <= self.idle_timeout_s:
                     continue
-                if session.pending_turns and idle <= self.pending_evict_cap_s:
-                    continue
+                if session.active:
+                    cap = self._evict_cap(session)
+                    if cap is None or idle <= cap:
+                        continue
                 due.append((session, idle))
 
         for session, idle in due:
             _log.info(
-                "evicting idle session %s/%s (idle %.1f min, %d turns pending)",
-                session.topic, session.name, idle / 60.0, session.pending_turns,
+                "evicting idle session %s/%s (idle %.1f min, %d turns and %d tasks"
+                " outstanding)",
+                session.topic, session.name, idle / 60.0,
+                session.pending_turns, len(session.task_ids),
             )
             try:
                 await session.stop_process()
@@ -301,6 +312,37 @@ class AgentHost:
                     "failed to evict session %s/%s", session.topic, session.name
                 )
         return len(due)
+
+    def _evict_cap(self, session: Session) -> float | None:
+        """How long a session with work outstanding is spared, or None for forever.
+
+        Only called for a session that is already `active`. Every kind of work
+        the session holds contributes the cap that fits it and the longest one
+        wins, since sparing is a property of the session and one piece of work
+        still running is reason enough.
+
+        Each cap answers the same question — how long may this kind of work go
+        silent before the likeliest explanation is that it is lost rather than
+        running — and they differ because the answers do. A turn is silent
+        because a model is thinking; a build is silent for as long as it takes
+        to build; a monitor is silent until the thing it watches happens, which
+        may be never and is not a fault. The caps exist at all because a
+        `turn_end` or a `task_end` that never arrives would otherwise make a
+        session immortal and hold its process for the life of the server, which
+        is not a hypothetical: a prompt the TUI ate left exactly that state in
+        the field.
+        """
+        caps: list[float | None] = []
+        if session.pending_turns or session.submits_in_flight:
+            caps.append(self.pending_evict_cap_s)
+        tasks = session.tasks
+        if any(kind not in ENDLESS_TASK_KINDS for kind in tasks.values()):
+            caps.append(self.task_evict_cap_s)
+        if session.has_endless_work:
+            caps.append(self.endless_evict_cap_s)
+        if not caps or None in caps:
+            return None
+        return max(cap for cap in caps if cap is not None)
 
     def start_sweeper(self, interval_s: float = DEFAULT_SWEEP_INTERVAL_S) -> None:
         """Run `evict_idle` on a loop from now until `stop_sweeper` or `close`.

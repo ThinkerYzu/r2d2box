@@ -145,7 +145,7 @@ python3 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
 .venv/bin/pytest                             # 213 tests, ~1s; needs no `claude`
 node tests/js/run.js                         # the front-end's 39, on their own
-R2D2BOX_RUN_LIVE=1 .venv/bin/pytest -m live  # 6 real conversations; needs agent-proxy and claude
+R2D2BOX_RUN_LIVE=1 .venv/bin/pytest -m live  # 7 real conversations; needs agent-proxy and claude
 ```
 
 Nothing in the default suite needs `claude`, and each layer is tested without

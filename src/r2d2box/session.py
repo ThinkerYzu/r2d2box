@@ -44,8 +44,22 @@ _log = logging.getLogger(__name__)
 # its process, not found a slow one.
 ACK_TIMEOUT_S = 30.0
 
-# The counts as they read with nothing running, for a session with no process.
-_IDLE_OUTSTANDING = {"user": 0, "unowned": 0, "background": 0}
+# Task kinds that are not expected to end on their own. A monitor watches until
+# something stops it, so a session holding one is working indefinitely by
+# design, and `AgentHost.evict_idle` gives it no deadline.
+#
+# The endless kinds are named rather than the ending ones, so a kind added to
+# agent-proxy later is capped rather than uncapped. Both ways of being wrong
+# about a new kind cost something, and they are not the same size: a capped
+# monitor loses one process after hours of idleness and the conversation
+# resumes, while an uncapped shell command whose `task_end` is never seen pins
+# a process for the life of the server. agent-proxy makes the same call for the
+# same reason, counting a task whose launch it never recognized as `background`.
+ENDLESS_TASK_KINDS = frozenset({"monitor"})
+
+# The kind assumed for a `task_start` that names none, which is what every
+# agent-proxy predating per-kind tasks emits. Those were all shell commands.
+DEFAULT_TASK_KIND = "shell"
 
 
 class Subscriber(Protocol):
@@ -162,8 +176,14 @@ class Session:
         # Turns that have started and not ended, by turn id. A finished turn
         # leaves here for the store and is not kept.
         self._open_turns: dict[str, Turn] = {}
-        self._task_ids: set[str] = set()
-        self._outstanding: dict[str, int] = dict(_IDLE_OUTSTANDING)
+        # Outstanding background work, task id to agent-proxy's `task.kind`.
+        # The kind is kept because eviction treats a monitor differently from a
+        # shell command; nothing else in the session reads it.
+        self._tasks: dict[str, str] = {}
+        # agent-proxy's five counts, replaced wholesale from every message that
+        # carries them. Empty until the first one arrives: the key set is the
+        # proxy's to define and this session has not been told it yet.
+        self._outstanding: dict[str, int] = {}
 
     # ---- state a host or a router reads -------------------------------------
 
@@ -177,14 +197,16 @@ class Session:
         """True while this session has any work in flight — the server's busy light.
 
         Work is a submit on its way to agent-proxy, a turn that has started and
-        not ended, or a background command still running: the three things that
-        outlive the request that started them. A process that is merely alive
-        is not work, and neither is a client being attached — a session nobody
-        has spoken to in an hour reads as idle however many tabs are watching
-        it.
+        not ended, or a background task still running: the three things that
+        outlive the request that started them. A task is any of agent-proxy's
+        kinds — a `run_in_background` shell command, a monitor watching for an
+        event, or a subagent working on its own — since all three are work
+        whoever is watching. A process that is merely alive is not work, and
+        neither is a client being attached — a session nobody has spoken to in
+        an hour reads as idle however many tabs are watching it.
 
         Broader than `turn_active`, which is only about the composer. A
-        background command left running after its turn ended blocks nothing in
+        background task left running after its turn ended blocks nothing in
         the browser but is very much still work for the machine, and that is
         the difference between the two.
 
@@ -192,7 +214,7 @@ class Session:
         same question, and a host that only ever asks at a moment of its own
         choosing needs nothing else.
         """
-        return bool(self._open_turns or self._task_ids or self._submits_in_flight)
+        return bool(self._open_turns or self._tasks or self._submits_in_flight)
 
     @property
     def turn_active(self) -> bool:
@@ -203,6 +225,17 @@ class Session:
         conversation.
         """
         return bool(self._open_turns)
+
+    @property
+    def submits_in_flight(self) -> int:
+        """How many submits are between the caller and agent-proxy's `ack`.
+
+        Work with no turn to its name yet: assembling the prompt and spawning
+        the process both happen here, and neither is visible in `pending_turns`.
+        Bounded by `ACK_TIMEOUT_S` per submit, so a session showing one for long
+        has lost its process rather than found a slow one.
+        """
+        return self._submits_in_flight
 
     @property
     def pending_turns(self) -> int:
@@ -230,8 +263,32 @@ class Session:
 
     @property
     def task_ids(self) -> set[str]:
-        """Background `run_in_background` commands still running, by task id."""
-        return set(self._task_ids)
+        """Every outstanding background task, by id, whatever kind it is.
+
+        Kept from before tasks had kinds, and still the whole set — read
+        `tasks` instead when the kinds matter.
+        """
+        return set(self._tasks)
+
+    @property
+    def tasks(self) -> dict[str, str]:
+        """Every outstanding background task, id to agent-proxy's `task.kind`.
+
+        The kinds are agent-proxy's and may grow, so an unrecognized one is
+        still tracked and still counts as work; only the eviction deadline it
+        falls under is a guess, and `ENDLESS_TASK_KINDS` says which way.
+        """
+        return dict(self._tasks)
+
+    @property
+    def has_endless_work(self) -> bool:
+        """True while a task is outstanding that is not expected to end by itself.
+
+        A monitor watches until something stops it, so a session holding one is
+        working indefinitely by design rather than stuck. `AgentHost.evict_idle`
+        reads this to decide which eviction cap a session falls under.
+        """
+        return any(kind in ENDLESS_TASK_KINDS for kind in self._tasks.values())
 
     @property
     def subscriber_count(self) -> int:
@@ -408,7 +465,8 @@ class Session:
                 **self._position(),
                 "turn_active": self.turn_active,
                 "turn_ids": sorted(self._open_turns),
-                "task_ids": sorted(self._task_ids),
+                "task_ids": sorted(self._tasks),
+                "tasks": self._task_list(),
                 "process_alive": self.process_alive,
                 "outstanding": dict(self._outstanding),
             }
@@ -429,10 +487,22 @@ class Session:
             **self._position(),
             "turns": [turn.to_dict() for turn in (*stored, *running)],
             "turn_active": self.turn_active,
-            "task_ids": sorted(self._task_ids),
+            "task_ids": sorted(self._tasks),
+            "tasks": self._task_list(),
             "process_alive": self.process_alive,
             "outstanding": dict(self._outstanding),
         }
+
+    def _task_list(self) -> list[dict[str, str]]:
+        """Outstanding tasks as `attached` and `status` carry them, id order.
+
+        Sorted by id so two clients comparing snapshots see the same list, and
+        for the same reason `task_ids` is sorted.
+        """
+        return [
+            {"id": task_id, "kind": self._tasks[task_id]}
+            for task_id in sorted(self._tasks)
+        ]
 
     # ---- the process and its read pump --------------------------------------
 
@@ -653,11 +723,11 @@ class Session:
         if kind == "task_start":
             task_id = _task_id(message)
             if task_id is not None:
-                self._task_ids.add(task_id)
+                self._tasks[task_id] = _task_kind(message)
         elif kind == "task_end":
             task_id = _task_id(message)
             if task_id is not None:
-                self._task_ids.discard(task_id)
+                self._tasks.pop(task_id, None)
 
         turn = self._turn_for(message)
         if turn is not None:
@@ -803,8 +873,8 @@ class Session:
         async with self._lock:
             for turn_id in list(self._open_turns):
                 await self._end_turn_locked(turn_id, "agent-proxy exited")
-            self._task_ids.clear()
-            self._outstanding = dict(_IDLE_OUTSTANDING)
+            self._tasks.clear()
+            self._outstanding = {key: 0 for key in self._outstanding}
             await self._broadcast_locked({
                 "type": "process_exited",
                 "returncode": proxy.returncode,
@@ -1038,3 +1108,19 @@ def _task_id(message: dict[str, Any]) -> str | None:
         return None
     task_id = task.get("id")
     return task_id if isinstance(task_id, str) else None
+
+
+def _task_kind(message: dict[str, Any]) -> str:
+    """What kind of background task a `task_start` announces.
+
+    Falls back to `DEFAULT_TASK_KIND` for a message that names none, which is
+    every `task_start` from an agent-proxy predating per-kind tasks. The kind
+    is not validated against the ones known here: an unrecognized kind is still
+    tracked and still holds off eviction, it just does so under a deadline
+    rather than without one.
+    """
+    task = message.get("task")
+    if not isinstance(task, dict):
+        return DEFAULT_TASK_KIND
+    kind = task.get("kind")
+    return kind if isinstance(kind, str) else DEFAULT_TASK_KIND

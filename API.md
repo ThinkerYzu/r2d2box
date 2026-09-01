@@ -125,6 +125,8 @@ R2D2Box(
     store=None,
     idle_timeout_s=1200,
     pending_evict_cap_s=14400,
+    task_evict_cap_s=14400,
+    endless_evict_cap_s=None,
     sweep_interval_s=60,
     static_dir=None,
     client_queue_limit=512,
@@ -141,6 +143,8 @@ R2D2Box(
 | `store` | `MemoryTranscriptStore()` | where finished turns go |
 | `idle_timeout_s` | 1200 | stop the agent behind a session idle this long |
 | `pending_evict_cap_s` | 14400 | stop it even with a turn in flight past this |
+| `task_evict_cap_s` | 14400 | the same cap for a background task that is meant to end |
+| `endless_evict_cap_s` | none | the same cap for a monitor; `None` means never stop one |
 | `sweep_interval_s` | 60 | how often the idle sweep runs |
 | `static_dir` | the packaged one | serve a modified front-end instead |
 | `client_queue_limit` | 512 | messages one client may fall behind by before it is dropped |
@@ -259,14 +263,17 @@ A session is **working** when any of three things is true:
 |---|---|---|
 | a submit is in flight | the moment `submit` is called | agent-proxy acknowledges it, or it fails |
 | a turn has started and not ended | its `ack` | its `turn_end` |
-| a background command is running | `task_start` | `task_end` |
+| a background task is running | `task_start` | `task_end` |
+
+A background task is any of agent-proxy's kinds — a `run_in_background` shell
+command, a monitor, or a subagent — and all three count.
 
 The first is why the signal goes up before there is a turn to point at:
 assembling the prompt and spawning a process are the slow part of a submit, and
 a signal that waited for the ack would show nothing during the seconds a reader
 is most likely to be watching. The third is why this is broader than
-`turn_active` — a `run_in_background` command outliving its turn frees the
-composer but is still work.
+`turn_active` — a background task outliving its turn frees the composer but is
+still work.
 
 A live agent-proxy process is **not** working, and neither is an attached
 browser. A conversation nobody has spoken to in an hour is idle however many
@@ -390,7 +397,8 @@ turn_id = await session.submit("why does it crash?")
 | `await snapshot()` / `await status()` | the `attached` and `status` payloads |
 | `await report_error(text)` | broadcast a session-wide error of your own |
 | `active` | whether this session has any work in flight |
-| `turn_active`, `pending_turns`, `open_turns`, `task_ids`, `process_alive`, `subscriber_count` | live state, derived rather than latched |
+| `turn_active`, `pending_turns`, `submits_in_flight`, `open_turns`, `process_alive`, `subscriber_count` | live state, derived rather than latched |
+| `task_ids`, `tasks`, `has_endless_work` | outstanding background work; `tasks` maps each id to agent-proxy's kind |
 | `await stop_process()` / `await close()` / `await clear()` | evict the agent / end the session / discard the transcript |
 
 Two properties of `submit` shape everything above it. It returns when
@@ -416,9 +424,29 @@ itself survives — it keeps the claude session id — so the next `submit` spaw
 a replacement with `--resume` and continues the conversation. Nobody attached
 sees anything but a `process_exited`.
 
-A session with a turn still running is spared until `pending_evict_cap_s`,
-because a turn keeps running with nobody listening and nothing refreshes its
-idle clock while it does. The cap stops that exemption becoming permanent.
+**A session with work outstanding is spared.** The idle clock only moves when
+agent-proxy says something, and work that has gone quiet says nothing — a turn
+keeps running with nobody listening, and a background task is silent from
+`task_start` until `task_end`. Evicting either kills it: the task is a child of
+the agent process, so a build stopped this way never reports, and the turn
+agent-proxy would have woken to tell you about it never happens.
+
+How long a session is spared depends on what it is waiting for:
+
+| Outstanding | Spared until | Because |
+|---|---|---|
+| a turn, or a submit not yet acknowledged | `pending_evict_cap_s` | a `turn_end` that never arrives would otherwise make the session immortal |
+| a shell command or a subagent | `task_evict_cap_s` | the same, for a `task_end` that never arrives |
+| a monitor | `endless_evict_cap_s`, by default never | a monitor watches until something stops it, so there is no deadline it should be failing to meet |
+
+A session holding several kinds is spared for the longest of them. A task kind
+this version does not recognize — agent-proxy may add one — still spares its
+session, under `task_evict_cap_s`: an unbounded exemption for something unknown
+is the more expensive way to be wrong, since it would hold a process for the
+life of the server.
+
+Set `endless_evict_cap_s` if you would rather bound the process a long-lived
+monitor holds. Nothing else has to change to get the old behavior back.
 
 ---
 
@@ -574,12 +602,12 @@ client also carry `seq`; messages aimed at one connection carry
 | Type | Source | Meaning |
 |---|---|---|
 | `attached` | r2d2box | the transcript plus current state, in one message |
-| `status` | r2d2box | turn in flight, outstanding task ids, process alive |
+| `status` | r2d2box | turn in flight, outstanding tasks, process alive |
 | `detached` | r2d2box | the `detach` is done |
 | `turn_prompt` | r2d2box | what was asked, and the turn id answering it |
 | `text`, `thinking`, `tool_use`, `tool_result` | agent-proxy | turn content |
 | `turn_start`, `turn_end` | agent-proxy | turn boundaries, with `turn.kind` |
-| `task_start`, `task_end` | agent-proxy | background command lifecycle |
+| `task_start`, `task_end` | agent-proxy | background task lifecycle, with `task.kind` |
 | `error` | either | a session failure, or — with `scope: "connection"` — this client's command refused |
 | `process_exited` | r2d2box | the agent-proxy behind this session is gone |
 | `session_closed` | r2d2box | this conversation is over; the last message a session sends |
@@ -611,9 +639,20 @@ An `attached` message looks like this:
  "turns": [{"id": "t-3", "kind": "user", "user": "why does it crash?",
             "events": [{"type": "turn_start", "…": "…"}],
             "started_at": 1755300000.0, "ended_at": 1755300012.0, "outcome": "ok"}],
- "turn_active": true, "task_ids": ["bash_3"], "process_alive": true,
- "outstanding": {"user": 1, "unowned": 0, "background": 1}}
+ "turn_active": true, "process_alive": true,
+ "task_ids": ["bash_3", "mon_1"],
+ "tasks": [{"id": "bash_3", "kind": "shell"}, {"id": "mon_1", "kind": "monitor"}],
+ "outstanding": {"user": 1, "unowned": 0, "background": 1, "monitor": 1, "agent": 0}}
 ```
+
+`tasks` and `task_ids` hold the same tasks; `tasks` adds agent-proxy's kind for
+each. `outstanding` is agent-proxy's own count vector, forwarded as it arrives —
+**do not hard-code its keys.** They are agent-proxy's to add to, they are
+disjoint, and no work falls outside them, so `any(outstanding.values())` is the
+whole answer to "is anything running" even for a count added after you wrote
+this. Between a process exiting and its replacement's first message the counts
+are the last ones seen, zeroed; a session that has never run a process reports
+`{}`.
 
 ### Four rules a renderer has to get right
 
@@ -632,10 +671,15 @@ which is correct only because the transcript is authoritative. Do not merge it.
 `(topic, session)`, so every `attached` is also a reset point.
 
 **The composer's disabled state belongs to the session, not the tab.**
-`turn_active` and `task_ids` arrive from `attached` and `status`; replace your
+`turn_active` and the task set arrive from `attached` and `status`; replace your
 own with them, never accumulate. A turn another tab started disables this tab's
 input, and a background task that finished while the socket was down cannot
 leave it stuck.
+
+Block on a task only if it is going to end. A shell command and a subagent will;
+a **monitor** watches until something stops it, so a renderer that waits for one
+disables its input for the rest of the conversation. That is what `tasks` gives
+you the kind for, and what the shipped box does with it.
 
 **The question is a broadcast too.** `turn_prompt` carries what was asked to
 every attached client, so draw nothing locally when you submit. A "helpful"
@@ -810,6 +854,7 @@ app on SSE is usually dropping both without having decided to.
 | displacing a second client and closing its socket | fan-out; a second tab is a view, not an error |
 | terminate-on-idle while keeping the session id | the idle sweeper, which does exactly this |
 | a 20-minute idle timeout and a cap for turns still running | `idle_timeout_s=1200`, `pending_evict_cap_s=14400` — the defaults |
+| nothing sparing a session whose background work is still running | spared already, and a monitor indefinitely — see *Idle eviction* |
 
 The third row is a silent bug worth checking for. Two tabs that each spawn a
 process while resuming one conversation id will each write turns the other's
@@ -830,7 +875,7 @@ process never sees, and nothing surfaces the divergence.
 | Today | After |
 |---|---|
 | `{role: …}` re-encoding of the message stream | forwarded messages, each naming the turn it belongs to — switch on `type` |
-| a client-side set of outstanding background task ids | `task_ids` from `attached` and `status`; **delete the client-side set** |
+| a client-side set of outstanding background task ids | `tasks` from `attached` and `status`; **delete the client-side set** |
 | `marked.parse()` output assigned straight to `innerHTML` | sanitized with DOMPurify first, always |
 | your own session picker and close button | still yours, on `GET /sessions/{topic}` and `box.attach` — `demo/index.html` shows the shape |
 | an idle inhibitor or similar held for the length of a turn | still yours — drive it from `box.on('turn_start')` and `box.on('turn_end')` |

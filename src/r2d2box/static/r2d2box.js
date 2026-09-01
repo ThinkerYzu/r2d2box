@@ -11,10 +11,11 @@
 // Four things here are less obvious than they look, and each is a bug one of
 // the two applications this library was extracted from already shipped:
 //
-// **The server owns the composer's disabled state.** `turn_active` and
-// `task_ids` arrive from the session and are replaced, never accumulated. A
+// **The server owns the composer's disabled state.** `turn_active` and the
+// task set arrive from the session and are replaced, never accumulated. A
 // turn another tab started disables this tab's input, and a task that finished
-// while the socket was down cannot leave the input stuck.
+// while the socket was down cannot leave the input stuck. A monitor is the one
+// kind of task that does not block the input, because it may never end.
 //
 // **An `attached` message is a reset point, not an update.** The transcript in
 // it is authoritative and `seq` may have restarted, so it replaces what is on
@@ -59,6 +60,16 @@
   // until a reload, which is a bug one of the original implementations shipped
   // twice.
   var STATUS_POLL_MS = 15000;
+
+  // Task kinds that are not expected to end on their own. A monitor watches
+  // until something stops it, so it must not gate the composer: a person can
+  // go on talking to an agent that is watching a log, and a box that waited
+  // for the watch to finish would never take another word.
+  var ENDLESS_TASK_KINDS = { monitor: true };
+
+  // The kind assumed for a task that names none, which is what an older server
+  // sends. Those were all shell commands, and shell commands end.
+  var DEFAULT_TASK_KIND = 'shell';
 
   // ---- small DOM helpers ----------------------------------------------------
 
@@ -406,7 +417,9 @@
     this.turns = {};
     this.turnOrder = [];
     this.openTurns = {};
-    this.taskIds = {};
+    // Outstanding background tasks, id to kind. The kind decides whether one
+    // gates the composer; see `ENDLESS_TASK_KINDS`.
+    this.tasks = {};
     this.processAlive = false;
     this.replayTurn = null;
 
@@ -601,9 +614,11 @@
     } else if (type === 'turn_end') {
       delete this.openTurns[turnIdOf(message)];
     } else if (type === 'task_start') {
-      if (message.task && message.task.id) this.taskIds[message.task.id] = true;
+      if (message.task && message.task.id) {
+        this.tasks[message.task.id] = message.task.kind || DEFAULT_TASK_KIND;
+      }
     } else if (type === 'task_end') {
-      if (message.task && message.task.id) delete this.taskIds[message.task.id];
+      if (message.task && message.task.id) delete this.tasks[message.task.id];
     } else if (type === 'session_closed') {
       this.handleSessionClosed();
       return;
@@ -728,7 +743,7 @@
     this.turns = {};
     this.turnOrder = [];
     this.openTurns = {};
-    this.taskIds = {};
+    this.tasks = {};
     this.statusEl = null;
   };
 
@@ -743,9 +758,19 @@
    */
   Box.prototype.applyState = function (message) {
     this.processAlive = !!message.process_alive;
-    this.taskIds = {};
-    var tasks = message.task_ids || [];
-    for (var i = 0; i < tasks.length; i++) this.taskIds[tasks[i]] = true;
+    // `tasks` carries the kinds and `task_ids` does not, so an older server
+    // that sends only the ids leaves every task looking like a shell command
+    // — which is what every task was when `task_ids` was the whole message.
+    this.tasks = {};
+    var i;
+    if (message.tasks) {
+      for (i = 0; i < message.tasks.length; i++) {
+        this.tasks[message.tasks[i].id] = message.tasks[i].kind || DEFAULT_TASK_KIND;
+      }
+    } else {
+      var ids = message.task_ids || [];
+      for (i = 0; i < ids.length; i++) this.tasks[ids[i]] = DEFAULT_TASK_KIND;
+    }
 
     if (message.turn_ids) {
       this.openTurns = {};
@@ -842,6 +867,14 @@
     this.refreshComposer();
   };
 
+  /** True while a task is outstanding that is expected to finish on its own. */
+  Box.prototype.hasEndingTask = function () {
+    for (var id in this.tasks) {
+      if (!ENDLESS_TASK_KINDS[this.tasks[id]]) return true;
+    }
+    return false;
+  };
+
   /**
    * Enable or disable the composer from the session's state, and say why.
    *
@@ -849,10 +882,14 @@
    * `disabled` — the three producers (a turn here, a turn in another tab, an
    * outstanding background task) cannot then fight over it. Being busy is a
    * property of the session and not of this tab.
+   *
+   * Only work that will end by itself blocks the input. A monitor may watch
+   * for the rest of the conversation, so waiting for one would be waiting
+   * forever.
    */
   Box.prototype.refreshComposer = function () {
     var busy = Object.keys(this.openTurns).length > 0;
-    var waiting = !busy && Object.keys(this.taskIds).length > 0;
+    var waiting = !busy && this.hasEndingTask();
     var blocked = busy || waiting;
 
     this.inputEl.disabled = blocked;
@@ -911,7 +948,7 @@
       self.statusTimer = null;
       if (self.destroyed) return;
       self.send({ type: 'status_query' });
-      if (Object.keys(self.openTurns).length || Object.keys(self.taskIds).length) {
+      if (Object.keys(self.openTurns).length || self.hasEndingTask()) {
         self.statusTimer = self.setTimeout(tick, STATUS_POLL_MS);
       }
     };

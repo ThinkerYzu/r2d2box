@@ -66,7 +66,12 @@ class FakeProxy:
         # message having left the queue.
         self._emitted = 0
         self._handled = 0
-        self._outstanding = dict(outstanding or {"user": 0, "unowned": 0, "background": 0})
+        # All five of agent-proxy's counts by default: a fake with a narrower
+        # vocabulary than the real thing would hide a client hard-coding it.
+        self._outstanding = dict(
+            outstanding
+            or {"user": 0, "unowned": 0, "background": 0, "monitor": 0, "agent": 0}
+        )
         self._alive = True
         self._consumed = False
 

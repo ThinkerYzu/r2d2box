@@ -429,6 +429,77 @@ async def test_attach_reports_the_tasks_still_running(started_session):
     assert subscriber.messages[0]["task_ids"] == ["bash_3", "bash_9"]
 
 
+async def test_the_task_set_keeps_the_kind_of_each_task(started_session):
+    session, proxy, turn_id = await started_session()
+    await proxy.emit({"type": "task_start", "turn": turn_ref(turn_id),
+                      "task": {"id": "bash_3", "kind": "shell"}})
+    await proxy.emit({"type": "task_start", "turn": turn_ref(turn_id),
+                      "task": {"id": "mon_1", "kind": "monitor"}})
+    await proxy.emit({"type": "task_start", "turn": turn_ref(turn_id),
+                      "task": {"id": "sub_1", "kind": "agent"}})
+    await proxy.drain()
+
+    assert session.tasks == {"bash_3": "shell", "mon_1": "monitor", "sub_1": "agent"}
+    assert session.task_ids == {"bash_3", "mon_1", "sub_1"}
+
+
+async def test_a_task_start_with_no_kind_reads_as_a_shell_command(started_session):
+    """Every `task_start` from an agent-proxy predating per-kind tasks looks like this."""
+    session, proxy, turn_id = await started_session()
+    await proxy.emit({"type": "task_start", "turn": turn_ref(turn_id),
+                      "task": {"id": "bash_3"}})
+    await proxy.drain()
+
+    assert session.tasks == {"bash_3": "shell"}
+    assert session.has_endless_work is False
+
+
+async def test_only_a_monitor_counts_as_work_that_will_not_end_itself(started_session):
+    session, proxy, turn_id = await started_session()
+    await proxy.emit({"type": "task_start", "turn": turn_ref(turn_id),
+                      "task": {"id": "sub_1", "kind": "agent"}})
+    await proxy.drain()
+    assert session.has_endless_work is False
+
+    await proxy.emit({"type": "task_start", "turn": turn_ref(turn_id),
+                      "task": {"id": "mon_1", "kind": "monitor"}})
+    await proxy.drain()
+    assert session.has_endless_work is True
+
+    await proxy.emit({"type": "task_end", "turn": turn_ref(turn_id),
+                      "task": {"id": "mon_1"}, "exit_code": None})
+    await proxy.drain()
+    assert session.has_endless_work is False
+
+
+async def test_an_unfamiliar_kind_is_tracked_and_is_not_endless(started_session):
+    """A kind agent-proxy adds later must still count as work, under a deadline."""
+    session, proxy, turn_id = await started_session()
+    await proxy.emit({"type": "task_start", "turn": turn_ref(turn_id),
+                      "task": {"id": "new_1", "kind": "something-new"}})
+    await proxy.drain()
+
+    assert session.tasks == {"new_1": "something-new"}
+    assert session.active is True
+    assert session.has_endless_work is False
+
+
+async def test_attach_and_status_carry_the_kinds_beside_the_ids(started_session):
+    session, proxy, turn_id = await started_session()
+    await proxy.emit({"type": "task_start", "turn": turn_ref(turn_id),
+                      "task": {"id": "mon_1", "kind": "monitor"}})
+    await proxy.emit({"type": "task_start", "turn": turn_ref(turn_id),
+                      "task": {"id": "bash_3", "kind": "shell"}})
+    await proxy.drain()
+
+    subscriber = RecordingSubscriber()
+    await session.attach(subscriber)
+    expected = [{"id": "bash_3", "kind": "shell"}, {"id": "mon_1", "kind": "monitor"}]
+    assert subscriber.messages[0]["tasks"] == expected
+    assert subscriber.messages[0]["task_ids"] == ["bash_3", "mon_1"]
+    assert (await session.status())["tasks"] == expected
+
+
 async def test_the_outstanding_counts_are_replaced_not_accumulated(started_session):
     """They are absolute, so a session that missed messages is right again on the next."""
     session, proxy, turn_id = await started_session()
@@ -639,6 +710,38 @@ async def test_a_dead_process_leaves_no_turn_pending(started_session):
     assert session.pending_turns == 0
     assert session.turn_active is False
     assert session.process_alive is False
+
+
+async def test_a_dead_process_zeroes_the_counts_without_narrowing_them(started_session):
+    """The key set is agent-proxy's; a client must not see it shrink at an exit."""
+    session, proxy, turn_id = await started_session()
+    subscriber = RecordingSubscriber()
+    await session.attach(subscriber)
+    await proxy.emit({
+        "type": "task_start", "turn": turn_ref(turn_id),
+        "task": {"id": "mon_1", "kind": "monitor"},
+        "outstanding": {"user": 1, "unowned": 0, "background": 0, "monitor": 1, "agent": 2},
+    })
+    await proxy.drain()
+
+    await proxy.end_stream()
+    await wait_until(
+        lambda: "process_exited" in subscriber.types(), what="the process_exited message"
+    )
+
+    status = await session.status()
+    assert status["outstanding"] == {
+        "user": 0, "unowned": 0, "background": 0, "monitor": 0, "agent": 0,
+    }
+    assert status["tasks"] == []
+
+
+async def test_a_session_that_has_never_run_claims_no_counts(fake_session):
+    """Empty rather than invented: the vocabulary belongs to a proxy not yet spawned."""
+    session, _ = fake_session()
+
+    assert (await session.status())["outstanding"] == {}
+    assert session.active is False
 
 
 async def test_a_process_that_dies_before_the_ack_wakes_the_submit(fake_session):

@@ -42,6 +42,24 @@ async def run_one_turn(host: FakeHost, topic: str, name: str, text: str) -> str:
     return turn_id
 
 
+async def start_task(
+    host: FakeHost, topic: str, name: str, task_id: str, kind: str = "shell"
+) -> None:
+    """Leave one background task of `kind` outstanding on a session.
+
+    A task left outstanding after its turn has ended, which is the shape that
+    matters to eviction: `last_active` moves for the `task_start` and then
+    nothing else arrives, exactly as a real quiet task behaves. A turn runs
+    first when the session has no process yet, since only a submit spawns one
+    and eviction passes over a session with nothing to evict.
+    """
+    if (topic, name) not in host.proxies:
+        await run_one_turn(host, topic, name, f"launch {task_id}")
+    proxy = host.proxies[(topic, name)]
+    await proxy.emit({"type": "task_start", "task": {"id": task_id, "kind": kind}})
+    await proxy.drain()
+
+
 # ---- the registry ------------------------------------------------------------
 
 
@@ -315,6 +333,107 @@ async def test_the_pending_exemption_runs_out_at_the_cap(host):
 
     assert await host.evict_idle() == 1
     assert session.process_alive is False
+
+
+async def test_a_session_with_a_background_task_is_spared(host):
+    """A quiet task refreshes no timestamp, and is the work most exposed to the sweep."""
+    host.idle_timeout_s, host.task_evict_cap_s = 60, 3600
+    await start_task(host, "bug-1", "s1", "task-1")
+    session = await host.session("bug-1", "s1")
+    session.last_active -= 120
+
+    assert await host.evict_idle() == 0
+    assert session.process_alive is True
+
+
+async def test_a_subagent_is_spared_like_a_shell_command(host):
+    host.idle_timeout_s, host.task_evict_cap_s = 60, 3600
+    await start_task(host, "bug-1", "s1", "task-1", kind="agent")
+    session = await host.session("bug-1", "s1")
+    session.last_active -= 120
+
+    assert await host.evict_idle() == 0
+
+
+async def test_the_task_exemption_runs_out_at_the_cap(host):
+    """A `task_end` that never arrives must not make its session immortal."""
+    host.idle_timeout_s, host.task_evict_cap_s = 60, 300
+    await start_task(host, "bug-1", "s1", "task-1")
+    session = await host.session("bug-1", "s1")
+    session.last_active -= 600
+
+    assert await host.evict_idle() == 1
+    assert session.process_alive is False
+
+
+async def test_a_finished_task_stops_sparing_its_session(host):
+    host.idle_timeout_s, host.task_evict_cap_s = 60, 3600
+    await start_task(host, "bug-1", "s1", "task-1")
+    proxy = host.proxies[("bug-1", "s1")]
+    await proxy.emit({"type": "task_end", "task": {"id": "task-1"}, "exit_code": 0})
+    await proxy.drain()
+    session = await host.session("bug-1", "s1")
+    session.last_active -= 120
+
+    assert await host.evict_idle() == 1
+
+
+async def test_a_monitor_is_spared_past_every_finite_cap(host):
+    """A monitor watches until something stops it; that is not a session to reclaim."""
+    host.idle_timeout_s, host.task_evict_cap_s = 60, 300
+    await start_task(host, "bug-1", "s1", "task-1", kind="monitor")
+    session = await host.session("bug-1", "s1")
+    session.last_active -= 30 * 24 * 3600
+
+    assert await host.evict_idle() == 0
+    assert session.process_alive is True
+
+
+async def test_a_host_that_wants_a_monitor_capped_says_so(host):
+    host.idle_timeout_s, host.endless_evict_cap_s = 60, 300
+    await start_task(host, "bug-1", "s1", "task-1", kind="monitor")
+    session = await host.session("bug-1", "s1")
+    session.last_active -= 600
+
+    assert await host.evict_idle() == 1
+
+
+async def test_an_unfamiliar_task_kind_is_capped_rather_than_immortal(host):
+    """A kind added to agent-proxy later still counts as work, under a deadline."""
+    host.idle_timeout_s, host.task_evict_cap_s = 60, 300
+    await start_task(host, "bug-1", "s1", "task-1", kind="something-new")
+    session = await host.session("bug-1", "s1")
+    session.last_active -= 120
+    assert await host.evict_idle() == 0
+
+    session.last_active -= 600
+    assert await host.evict_idle() == 1
+
+
+async def test_the_longest_cap_wins_when_one_session_holds_two_kinds(host):
+    """Sparing is a property of the session, so the most patient work decides."""
+    host.idle_timeout_s, host.task_evict_cap_s = 60, 300
+    await start_task(host, "bug-1", "s1", "task-1")
+    await start_task(host, "bug-1", "s1", "task-2", kind="monitor")
+    session = await host.session("bug-1", "s1")
+    session.last_active -= 600
+
+    assert await host.evict_idle() == 0
+
+
+async def test_a_submit_still_waiting_for_its_ack_spares_its_session(host):
+    """Work with no turn to its name yet: the prompt and the spawn happen here."""
+    host.idle_timeout_s, host.pending_evict_cap_s = 60, 3600
+    host.auto_ack = False
+    session = await host.session("bug-1", "s1")
+    submitting = asyncio.create_task(session.submit("a question"))
+    await wait_until(lambda: session.submits_in_flight == 1)
+    session.last_active -= 120
+
+    assert await host.evict_idle() == 0
+
+    submitting.cancel()
+    await asyncio.gather(submitting, return_exceptions=True)
 
 
 async def test_an_already_evicted_session_is_not_evicted_again(host):
