@@ -215,6 +215,80 @@
   background: var(--r2d2-tool-result-bg);
 }
 
+/* ---- background task blocks ------------------------------------------- */
+/*
+ * The one block here that starts expanded rather than collapsed: a task is
+ * why the composer is about to block, so its command is worth reading before
+ * it has even finished. `finishTaskBlock` in the JS folds it once it ends.
+ */
+
+.r2d2-task {
+  margin: 6px 0;
+  padding: 6px var(--r2d2-gap);
+  border-left: 2px solid var(--r2d2-background-accent);
+  border-radius: 2px;
+  background: var(--r2d2-thinking-bg);
+  font-size: 12px;
+}
+
+.r2d2-task-error { border-left-color: var(--r2d2-error-accent); }
+
+.r2d2-task-header {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  cursor: pointer;
+}
+
+.r2d2-task-header::before {
+  content: '\25B6';
+  font-size: 9px;
+  color: var(--r2d2-muted);
+}
+
+.r2d2-task.r2d2-expanded .r2d2-task-header::before { content: '\25BC'; }
+
+.r2d2-task-status { color: var(--r2d2-background-accent); }
+.r2d2-task-ok .r2d2-task-status { color: var(--r2d2-agent-accent); }
+.r2d2-task-error .r2d2-task-status { color: var(--r2d2-error-accent); }
+
+.r2d2-task-kind {
+  color: var(--r2d2-background-accent);
+  font-weight: 600;
+}
+
+.r2d2-task-summary {
+  flex: 1;
+  overflow: hidden;
+  color: var(--r2d2-muted);
+  font-family: var(--r2d2-mono);
+  font-size: 11px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.r2d2-task-body { display: none; }
+.r2d2-task.r2d2-expanded .r2d2-task-body { display: block; }
+
+.r2d2-task-command,
+.r2d2-task-output {
+  margin: 4px 0 0;
+  padding: 6px var(--r2d2-gap);
+  max-height: 200px;
+  overflow: auto;
+  border-radius: 2px;
+  color: #aaa;
+  font-family: var(--r2d2-mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.r2d2-task-output {
+  border-left: 2px solid #7a8aaa;
+  background: var(--r2d2-tool-result-bg);
+}
+
 .r2d2-thinking {
   margin: 6px 0;
   padding: 6px var(--r2d2-gap);
@@ -267,10 +341,12 @@
 }
 
 .r2d2-fold > .r2d2-tool,
-.r2d2-fold > .r2d2-thinking { display: none; }
+.r2d2-fold > .r2d2-thinking,
+.r2d2-fold > .r2d2-task { display: none; }
 
 .r2d2-fold.r2d2-expanded > .r2d2-tool,
-.r2d2-fold.r2d2-expanded > .r2d2-thinking { display: block; }
+.r2d2-fold.r2d2-expanded > .r2d2-thinking,
+.r2d2-fold.r2d2-expanded > .r2d2-task { display: block; }
 
 /* ---- the working indicator ------------------------------------------------ */
 

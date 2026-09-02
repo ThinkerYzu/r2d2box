@@ -328,6 +328,84 @@ test('the context badge shows what will ride along, and clears with the submit',
   equal(element.querySelector('.r2d2-context-text'), null, 'and the badge goes');
 });
 
+// ---- background task blocks --------------------------------------------------
+
+test('a running task is drawn unfolded, and folds once it ends', () => {
+  const { socket, element } = mountBox();
+
+  socket.deliver(broadcast(1, { type: 'turn_start', turn: turn('t-1') }));
+  socket.deliver(broadcast(2, {
+    type: 'task_start', turn: turn('t-1'), task: { id: 'bash_3', kind: 'shell' },
+    command: 'grep -rn load_timeout_id .',
+  }));
+
+  const block = element.querySelector('.r2d2-task');
+  ok(block.classList.contains('r2d2-expanded'), 'a running task starts open');
+  equal(textsOf(element, '.r2d2-task-command'), ['grep -rn load_timeout_id .'],
+    'its command is on screen without a click');
+  equal(textsOf(element, '.r2d2-task-kind'), ['Shell command'], 'and its kind is labelled');
+
+  socket.deliver(broadcast(3, {
+    type: 'task_end', task: { id: 'bash_3', kind: 'shell' }, status: 'completed',
+    exit_code: 0, output: 'no matches',
+  }));
+
+  ok(!block.classList.contains('r2d2-expanded'), 'it folds once the work is done');
+  ok(block.classList.contains('r2d2-task-ok'), 'and says it succeeded');
+  equal(textsOf(element, '.r2d2-task-output'), ['no matches'], 'its output is inside the block');
+});
+
+test('a failed task is marked, and a killed or stopped one is neither ok nor an error', () => {
+  const { socket, element } = mountBox();
+
+  socket.deliver(broadcast(1, { type: 'task_start', turn: turn('t-1'), task: { id: 'a', kind: 'shell' } }));
+  socket.deliver(broadcast(2, { type: 'task_end', task: { id: 'a' }, status: 'failed' }));
+  ok(element.querySelector('.r2d2-task').classList.contains('r2d2-task-error'),
+    'failed reads as an error');
+
+  socket.deliver(broadcast(3, { type: 'task_start', turn: turn('t-1'), task: { id: 'b', kind: 'monitor' } }));
+  socket.deliver(broadcast(4, { type: 'task_end', task: { id: 'b' }, status: 'stopped' }));
+  const stopped = element.querySelectorAll('.r2d2-task')[1];
+  ok(!stopped.classList.contains('r2d2-task-ok') && !stopped.classList.contains('r2d2-task-error'),
+    'a deliberate stop is not colored as either a success or a failure');
+});
+
+test('a monitor with no command shows its kind, and its task_end needs no matching turn', () => {
+  const { socket, element } = mountBox();
+
+  socket.deliver(broadcast(1, {
+    type: 'task_start', turn: turn('t-1'), task: { id: 'mon_1', kind: 'monitor' },
+    summary: 'watching build.log',
+  }));
+  equal(textsOf(element, '.r2d2-task-kind'), ['Monitor'], 'labelled as a monitor');
+  equal(textsOf(element, '.r2d2-task-summary'), ['watching build.log'], 'the summary stands in for a command');
+  equal(element.querySelectorAll('.r2d2-task-command').length, 0, 'there is no command to show');
+
+  // No `turn` at all: a monitor's task_end routinely arrives long after the
+  // turn that started it has ended.
+  socket.deliver(broadcast(2, { type: 'task_end', task: { id: 'mon_1' }, status: 'stopped' }));
+  ok(!element.querySelector('.r2d2-task').classList.contains('r2d2-expanded'),
+    'the same block is found and folded, turn or no turn');
+});
+
+test('a task_end with no matching start becomes a note, like a stray tool_result', () => {
+  const { socket, element } = mountBox();
+
+  socket.deliver(broadcast(1, { type: 'task_end', task: { id: 'never-seen' }, status: 'failed' }));
+
+  equal(element.querySelectorAll('.r2d2-task').length, 0, 'nothing to fold');
+  equal(textsOf(element, '.r2d2-note'), ['task failed (no matching start)'],
+    'it reads as a note instead of vanishing');
+});
+
+test('a task with no turn running is drawn straight into the list', () => {
+  const { socket, element } = mountBox();
+
+  socket.deliver(broadcast(1, { type: 'task_start', task: { id: 'bash_3' }, command: 'ls' }));
+
+  equal(textsOf(element, '.r2d2-task-command'), ['ls'], 'drawn even with no turn to attach to');
+});
+
 // ---- attaching, resyncing, and the numbers that decide -----------------------
 
 test('an attached message replaces the screen rather than adding to it', () => {

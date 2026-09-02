@@ -115,7 +115,7 @@ interactive `claude` over a pty and states turn boundaries explicitly — every
 message carries a turn id, a kind, and the outstanding user/unowned/background
 counts. Its [API.md](https://github.com/ThinkerYzu/agent-proxy/blob/master/API.md)
 is the contract everything here is built on. What runs without either binary is
-the whole test suite: 213 tests pass with neither installed, because every layer
+the whole test suite: 229 tests pass with neither installed, because every layer
 is tested against a stand-in for the one below it.
 
 ## Running the demo
@@ -143,8 +143,8 @@ await session.submit("why does it crash?")
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
-.venv/bin/pytest                             # 213 tests, ~1s; needs no `claude`
-node tests/js/run.js                         # the front-end's 39, on their own
+.venv/bin/pytest                             # 229 tests, ~1s; needs no `claude`
+node tests/js/run.js                         # the front-end's 49, on their own
 R2D2BOX_RUN_LIVE=1 .venv/bin/pytest -m live  # 7 real conversations; needs agent-proxy and claude
 ```
 

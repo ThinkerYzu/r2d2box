@@ -71,6 +71,10 @@
   // sends. Those were all shell commands, and shell commands end.
   var DEFAULT_TASK_KIND = 'shell';
 
+  // A task block's header, by kind. Anything not listed here — a kind this
+  // box predates — reads as the generic label rather than as blank.
+  var TASK_KIND_LABELS = { shell: 'Shell command', monitor: 'Monitor', agent: 'Subagent' };
+
   // ---- small DOM helpers ----------------------------------------------------
 
   /** Build one element, with a class and optional text, in `doc`. */
@@ -143,6 +147,11 @@
     try { return JSON.stringify(content); } catch (e) { return String(content); }
   }
 
+  /** `text`, cut to `max` characters with a trailing ellipsis if it was longer. */
+  function truncate(text, max) {
+    return text.length > max ? text.slice(0, max - 3) + '...' : text;
+  }
+
   /** A one-line summary of a tool's input for its collapsed header. */
   function summarizeInput(input) {
     if (input == null) return '';
@@ -152,7 +161,69 @@
     if (text == null) {
       try { text = JSON.stringify(input); } catch (e) { text = String(input); }
     }
-    return text.length > 120 ? text.slice(0, 117) + '...' : text;
+    return truncate(text, 120);
+  }
+
+  /** The header label for a task's kind — the generic name for one this box predates. */
+  function taskKindLabel(kind) {
+    return TASK_KIND_LABELS[kind] || 'Background task';
+  }
+
+  /**
+   * Build a `task_start`'s box, expanded from the moment it is created.
+   *
+   * Unlike a tool call, which is worth reading only once it has an answer,
+   * a task is why the composer is about to block — so its command is shown
+   * immediately rather than behind a click. `finishTaskBlock` folds it once
+   * there is a result to read instead of a reason to wait.
+   */
+  function buildTaskBlock(doc, kind, summary, command) {
+    var block = make(doc, 'div', 'r2d2-task r2d2-task-running r2d2-expanded');
+    var header = make(doc, 'div', 'r2d2-task-header');
+    var status = make(doc, 'span', 'r2d2-task-status', '⋯');
+    header.appendChild(status);
+    header.appendChild(make(doc, 'span', 'r2d2-task-kind', taskKindLabel(kind)));
+    header.appendChild(
+      make(doc, 'span', 'r2d2-task-summary', truncate(summary || command || '', 120))
+    );
+    header.addEventListener('click', function () {
+      block.classList.toggle('r2d2-expanded');
+    });
+    block.appendChild(header);
+
+    var body = make(doc, 'div', 'r2d2-task-body');
+    if (command) body.appendChild(make(doc, 'pre', 'r2d2-task-command', command));
+    block.appendChild(body);
+
+    block._statusEl = status;
+    block._bodyEl = body;
+    return block;
+  }
+
+  /**
+   * Close a task's box: mark how it ended, add its output, and fold it away.
+   *
+   * `completed` is the only ending that reads as success; `failed` reads as
+   * an error, and `killed` or `stopped` — a deliberate end, most often a
+   * monitor's — reads as neither, since coloring it red would call an eviction
+   * or a "stop watching" click a failure.
+   */
+  function finishTaskBlock(block, message) {
+    block.classList.remove('r2d2-task-running');
+    block.classList.remove('r2d2-expanded');
+    if (message.status === 'completed') {
+      block.classList.add('r2d2-task-ok');
+      block._statusEl.textContent = '✓';
+    } else if (message.status === 'failed') {
+      block.classList.add('r2d2-task-error');
+      block._statusEl.textContent = '✗';
+    } else {
+      block._statusEl.textContent = '■';
+    }
+    if (message.output) {
+      var doc = block.ownerDocument;
+      block._bodyEl.appendChild(make(doc, 'pre', 'r2d2-task-output', message.output));
+    }
   }
 
   /** The turn id a message names, or null for one that names no turn. */
@@ -420,6 +491,10 @@
     // Outstanding background tasks, id to kind. The kind decides whether one
     // gates the composer; see `ENDLESS_TASK_KINDS`.
     this.tasks = {};
+    // A running task's box, id to element, so its `task_end` can find and
+    // fold it wherever it was drawn — a monitor's routinely arrives with no
+    // `turn` at all, long after the turn that started it has ended.
+    this.taskBlocks = {};
     this.processAlive = false;
     this.replayTurn = null;
 
@@ -654,9 +729,11 @@
         case 'thinking': turn.addThinking(message.text || ''); break;
         case 'tool_use': turn.addToolUse(message); break;
         case 'tool_result': turn.addToolResult(message); break;
+        case 'task_start': self.startTask(message, turn); break;
+        case 'task_end': self.endTask(message); break;
         case 'turn_end': turn.end(message); break;
         case 'error': self.appendNote('error: ' + (message.error || 'unknown')); break;
-        default: break;   // turn_start, task_*, and anything newer
+        default: break;   // turn_start and anything newer
       }
       self.pinStatus();
     });
@@ -674,11 +751,48 @@
       var running = this.replayTurn || this.runningTurn();
       if (running) { running.addToolResult(message); return; }
     }
+    if (message.type === 'task_start') { this.startTask(message); return; }
+    if (message.type === 'task_end') { this.endTask(message); return; }
     if (message.type === 'error') {
       this.appendNote('error: ' + (message.error || 'unknown'));
     } else if (message.type === 'process_exited') {
       this.appendNote('the agent stopped; the next message starts it again');
     }
+  };
+
+  /**
+   * Draw a `task_start`, in whichever turn it names or the one running.
+   *
+   * A task with no turn at all — nothing is running and none is given —
+   * is drawn straight into the message list rather than dropped, the same
+   * choice `appendNote` makes for a connection-scoped message.
+   */
+  Box.prototype.startTask = function (message, ownerTurn) {
+    var task = message.task || {};
+    var block = buildTaskBlock(this.doc, task.kind, message.summary, message.command);
+    if (task.id) this.taskBlocks[task.id] = block;
+    var turn = ownerTurn || this.replayTurn || this.runningTurn();
+    if (turn) turn.addBlock(block);
+    else this.messagesEl.appendChild(block);
+  };
+
+  /**
+   * Close a task's box by id, wherever `startTask` put it.
+   *
+   * A task not found here is one whose `task_start` this client never saw —
+   * it attached mid-task — and becomes a note, the same fallback a stray
+   * `tool_result` gets.
+   */
+  Box.prototype.endTask = function (message) {
+    var task = message.task || {};
+    var block = task.id ? this.taskBlocks[task.id] : null;
+    if (!block) {
+      this.appendNote(message.status === 'failed' ? 'task failed (no matching start)'
+                                                    : 'task ended (no matching start)');
+      return;
+    }
+    finishTaskBlock(block, message);
+    delete this.taskBlocks[task.id];
   };
 
   /** The one turn currently running, or null when none or several are. */
@@ -744,6 +858,7 @@
     this.turnOrder = [];
     this.openTurns = {};
     this.tasks = {};
+    this.taskBlocks = {};
     this.statusEl = null;
   };
 

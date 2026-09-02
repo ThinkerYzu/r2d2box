@@ -551,6 +551,7 @@ The structure those tests can rely on:
 | `.r2d2-message[data-turn="…"]` | one turn's block; `.r2d2-message-user` for the question |
 | `.r2d2-content` | the rendered prose |
 | `.r2d2-tool` | one tool call, with `-running`, `-ok` or `-error` |
+| `.r2d2-task` | one background task, with `-running`, `-ok` or `-error`; neither of the last two for a killed or stopped one |
 | `.r2d2-thinking` | a collapsed thinking block |
 | `.r2d2-fold` | the container older blocks fold into |
 | `.r2d2-status` | the working indicator at the foot of the list |
@@ -568,6 +569,16 @@ indicator and the prompt input. It does **not** draw session pickers, close
 buttons, titles or panel headers. Those differ too much between applications to
 be worth standardizing, and each is one REST call plus one `box.attach` —
 `demo/index.html` builds all of them in about forty lines.
+
+A background task is drawn the moment it starts, and unlike a tool call it
+starts **open**: its kind (`Shell command`, `Monitor`, `Subagent`, or the
+generic label for one this box predates) and its command are what a reader
+needs while it is still the reason the composer is blocked, not something
+worth a click to find. Its `task_end` folds it and adds whatever output came
+back — a `completed` task reads as a success, `failed` as an error, and
+`killed` or `stopped` as neither, since a monitor being told to stop is not a
+failure. The box finds a task by id wherever it was drawn, because a `task_end`
+often carries no turn at all by the time it arrives.
 
 ---
 
