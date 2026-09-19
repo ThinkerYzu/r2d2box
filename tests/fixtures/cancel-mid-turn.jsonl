@@ -1,0 +1,11 @@
+# One user turn that is cancelled while its tool runs: the shape agent-proxy
+# documents for a running turn, ending on the inner's interruption entry.
+{"op": "await_submit"}
+{"op": "ack"}
+{"op": "emit", "message": {"type": "turn_start", "turn": {"id": "t-1", "kind": "user"}}}
+{"op": "emit", "message": {"type": "tool_use", "turn": {"id": "t-1", "kind": "user"}, "tool": "Bash", "input": {"command": "sleep 40"}, "tool_use_id": "toolu_1"}}
+{"op": "await_cancel"}
+{"op": "ack_cancel"}
+{"op": "emit", "message": {"type": "tool_result", "turn": {"id": "t-1", "kind": "user"}, "tool_use_id": "toolu_1", "content": "The user doesn't want to proceed with this tool use.", "is_error": true}}
+{"op": "emit", "message": {"type": "turn_end", "turn": {"id": "t-1", "kind": "user"}, "basis": "marker:interrupted", "outcome": "cancelled", "usage": {}}}
+{"op": "exit"}

@@ -556,6 +556,92 @@ test('a refused submit gives the typed text back', () => {
   equal(input.value, 'what host is this?', 'the question is back where it can be re-sent');
 });
 
+// ---- stopping a turn --------------------------------------------------------
+
+test('Stop appears with a running turn and asks the session to take it back', () => {
+  const { socket, element } = mountBox();
+  const stop = element.querySelector('.r2d2-stop');
+  equal(stop.style.display, 'none', 'nothing to stop, so no button');
+
+  socket.deliver(broadcast(1, { type: 'turn_start', turn: turn('t-1') }));
+  equal(stop.style.display, '', 'a running turn shows it');
+  ok(!stop.disabled, 'and it is live');
+
+  stop.dispatch('click');
+  equal(socket.lastSent, { type: 'cancel', turn: 't-1' }, 'the turn is named by its id');
+  equal(textsOf(element, '.r2d2-status-text'), ['Working'],
+    'the click draws nothing: stopping is the server\'s word, not the tab\'s');
+  ok(!stop.disabled, 'so the button is not spent by the click either');
+});
+
+test('turn_cancel says Stopping in every tab, and the cancelled ending frees the composer', () => {
+  const { socket, element } = mountBox();
+  const stop = element.querySelector('.r2d2-stop');
+  const input = element.querySelector('.r2d2-input');
+
+  // Nothing was clicked here: the other tab asked, and this one only watches.
+  socket.deliver(broadcast(1, { type: 'turn_start', turn: turn('t-1') }));
+  socket.deliver(broadcast(2, { type: 'turn_cancel', turn: turn('t-1') }));
+  equal(textsOf(element, '.r2d2-status-text'), ['Stopping'], 'the broadcast is what says so');
+  ok(stop.disabled, 'a turn already being stopped is not asked again');
+  ok(input.disabled, 'and the composer stays blocked until the turn really ends');
+
+  socket.deliver(broadcast(3, {
+    type: 'turn_end', turn: turn('t-1'), basis: 'marker:interrupted', outcome: 'cancelled',
+  }));
+  ok(!input.disabled, 'the turn_end frees it');
+  equal(stop.style.display, 'none', 'and takes Stop away');
+  const message = element.querySelector('.r2d2-message');
+  ok(message.classList.contains('r2d2-turn-cancelled'), 'the turn is marked cancelled');
+  ok(!message.classList.contains('r2d2-turn-failed'), 'not failed');
+  equal(textsOf(element, '.r2d2-note'), ['turn cancelled'], 'and says so');
+});
+
+test('a turn blocks the composer from its prompt, so Stop can withdraw it before it runs', () => {
+  const { socket, element } = mountBox();
+  const input = element.querySelector('.r2d2-input');
+
+  socket.deliver(broadcast(1, { type: 'turn_prompt', turn: turn('t-1'), text: 'count to a million' }));
+  ok(input.disabled, 'acknowledged is open: the server has held the turn since the ack');
+
+  element.querySelector('.r2d2-stop').dispatch('click');
+  equal(socket.ofType('cancel'), [{ type: 'cancel', turn: 't-1' }], 'a queued turn can be taken back');
+
+  socket.deliver(broadcast(2, {
+    type: 'turn_end', turn: turn('t-1'), basis: 'cancel:withdrawn', outcome: 'cancelled',
+  }));
+  ok(!input.disabled, 'withdrawn before it started, and the composer is back');
+});
+
+test('Stop asks for every open turn a person started, and not for a background one', () => {
+  const { socket, element } = mountBox();
+
+  socket.deliver(broadcast(1, { type: 'turn_start', turn: turn('t-bg', 'unowned') }));
+  const stop = element.querySelector('.r2d2-stop');
+  ok(stop.disabled, 'an unowned turn cannot be cancelled, so there is nothing to click');
+
+  socket.deliver(broadcast(2, { type: 'turn_prompt', turn: turn('t-2'), text: 'and then?' }));
+  ok(!stop.disabled, 'a person\'s turn queued behind it can be');
+  stop.dispatch('click');
+  equal(socket.ofType('cancel'), [{ type: 'cancel', turn: 't-2' }], 'only that one is asked for');
+});
+
+test('a refused cancel is a note, and Stop stays available', () => {
+  const { socket, element } = mountBox();
+  socket.deliver(broadcast(1, { type: 'turn_start', turn: turn('t-1') }));
+  const stop = element.querySelector('.r2d2-stop');
+  stop.dispatch('click');
+
+  socket.deliver({
+    type: 'error', scope: 'connection', topic: 'bug-1992198', session: 's1',
+    error: 'the turn was not cancelled: turn t-1 is not open',
+  });
+
+  includes(textsOf(element, '.r2d2-note').join(' '), 'not cancelled', 'the refusal is shown');
+  ok(!stop.disabled, 'and nothing was latched by the click');
+  equal(element.querySelectorAll('.r2d2-message').length, 1, 'the turn on screen is untouched');
+});
+
 // ---- markdown ---------------------------------------------------------------
 
 test('assistant markdown goes through marked and then DOMPurify', () => {

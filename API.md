@@ -393,6 +393,7 @@ turn_id = await session.submit("why does it crash?")
 | Member | Does |
 |---|---|
 | `await submit(text, context=None)` | assemble the prompt, spawn if needed, return the turn id |
+| `await cancel(turn_id)` | take that turn back — withdrawn if queued, interrupted if running; returns once agent-proxy has taken the request, and `turn_end` says what came of it |
 | `await attach(subscriber)` / `await detach(subscriber)` | subscribe and unsubscribe |
 | `await snapshot()` / `await status()` | the `attached` and `status` payloads |
 | `await report_error(text)` | broadcast a session-wide error of your own |
@@ -481,6 +482,7 @@ cross-origin host passes. Otherwise the scheme and host come from the page.
 | Call | Does |
 |---|---|
 | `box.setContext(value)` | attach arbitrary JSON to the next submit, and show a badge for it |
+| `box.cancel()` | what the Stop button does: ask the session to take back every open turn a person started |
 | `box.on(type, handler)` / `box.off(type, handler)` | subscribe to a message type |
 | `box.attach(topic, session)` | switch conversations in place; omit `session` for a new one |
 | `box.destroy()` | close the socket, stop the timers, empty the element |
@@ -555,7 +557,8 @@ The structure those tests can rely on:
 | `.r2d2-thinking` | a collapsed thinking block |
 | `.r2d2-fold` | the container older blocks fold into |
 | `.r2d2-status` | the working indicator at the foot of the list |
-| `.r2d2-input`, `.r2d2-send` | the composer |
+| `.r2d2-input`, `.r2d2-send`, `.r2d2-stop` | the composer; Stop is shown only while a turn is open |
+| `.r2d2-turn-cancelled` | a turn that ended because someone pressed Stop |
 
 ### Rendering, and what the box does not draw
 
@@ -580,6 +583,18 @@ back — a `completed` task reads as a success, `failed` as an error, and
 failure. The box finds a task by id wherever it was drawn, because a `task_end`
 often carries no turn at all by the time it arrives.
 
+**Stop** appears beside Send while a turn is open and sends one `cancel` per
+open turn a person started — a prompt queued behind the running one would
+otherwise start the moment it stopped. The click itself draws nothing. The
+session broadcasts `turn_cancel` once agent-proxy has taken the request, and
+that is what turns the indicator to "Stopping" in every tab, this one included;
+the turn's own `turn_end` then frees the composer, and the turn is marked
+cancelled rather than failed. A Stop the agent did not act on — one `Esc` on a
+busy pty is occasionally missed — ends with the ordinary outcome, and the
+button is back for another press. Background tasks are not stopped: `Esc`
+does not reach them, and a task the cancelled turn launched runs to its
+`task_end`.
+
 ---
 
 ## WebSocket protocol
@@ -596,6 +611,7 @@ time.
 |---|---|---|
 | `attach` | `topic`, optional `session` | `attached`. With no `session`, one is created and named in the answer |
 | `submit` | `text`, optional `context` | nothing directly — the turn arrives as broadcasts |
+| `cancel` | `turn` | nothing directly — `turn_cancel` is broadcast once the request is taken, and the turn's `turn_end` says what came of it |
 | `status_query` | — | `status` |
 | `detach` | — | `detached` |
 
@@ -603,6 +619,15 @@ A second `attach` switches sessions in place. Anything else — a frame that is
 not a JSON object, an unknown type, a `submit` before any `attach` — comes back
 as a connection-scoped `error` rather than being dropped, because a silent drop
 reads as a hung server from the browser.
+
+`cancel` names a turn by the id every message of it carries. A queued turn is
+withdrawn and ends at once; a running one gets one `Esc`, and ends when the
+agent is seen to stop — which can take seconds while a tool is aborted. Only a
+person's turn can be cancelled, and only while it is open: an unowned turn, a
+turn that has ended, or one whose process has since exited is refused with a
+connection-scoped `error`, and nothing is sent to the agent. A cancel affects
+the turn it names and nothing else — turns queued behind it still run, and
+background tasks are untouched.
 
 ### Server → client
 
@@ -616,6 +641,7 @@ client also carry `seq`; messages aimed at one connection carry
 | `status` | r2d2box | turn in flight, outstanding tasks, process alive |
 | `detached` | r2d2box | the `detach` is done |
 | `turn_prompt` | r2d2box | what was asked, and the turn id answering it |
+| `turn_cancel` | r2d2box | a `cancel` for this turn was taken; the turn is stopping, and its `turn_end` is still to come |
 | `text`, `thinking`, `tool_use`, `tool_result` | agent-proxy | turn content |
 | `turn_start`, `turn_end` | agent-proxy | turn boundaries, with `turn.kind` |
 | `task_start`, `task_end` | agent-proxy | background task lifecycle, with `task.kind` |
@@ -641,7 +667,15 @@ after an idle eviction, an agent that died, or a server restart, all of which
 put a fresh agent-proxy behind a session that is numbering from `t-1` again.
 Use `proxy_turn_id` only to match a turn against the agent's own log lines.
 
-`ack` and `ready` are not forwarded at all.
+`ack` and `ready` are not forwarded at all, and neither is the `error` that
+answers a refused `cancel` — that goes back to the one client that asked.
+
+`turn_end.outcome` is agent-proxy's: `success`, `error`, or `cancelled` when a
+`cancel` took effect. A cancelled turn's `basis` is `marker:interrupted` (the
+agent had produced something and was interrupted), `cancel:restored` (it had
+produced nothing and handed the prompt back), or `cancel:withdrawn` (it was
+still queued). A turn r2d2box ended itself, because its process exited, has
+`basis` and `outcome` both `error`.
 
 An `attached` message looks like this:
 
@@ -694,7 +728,11 @@ you the kind for, and what the shipped box does with it.
 
 **The question is a broadcast too.** `turn_prompt` carries what was asked to
 every attached client, so draw nothing locally when you submit. A "helpful"
-local render doubles every question the moment the broadcast arrives.
+local render doubles every question the moment the broadcast arrives. The same
+goes for Stop: `turn_cancel` is the session telling every tab the turn is
+stopping, so a renderer marks the turn from that and not from its own click —
+and a turn is open from its `turn_prompt`, not its `turn_start`, so a Stop
+before the turn has started is a withdrawal rather than a no-op.
 
 ### One turn, across two tabs
 
@@ -809,6 +847,7 @@ What r2d2box does when things go wrong, so you know what not to build.
 | A socket that drops | the box reconnects on a 0.5s→10s backoff and re-attaches, and the transcript in `attached` covers what it missed |
 | `marked` or DOMPurify missing | assistant text is shown verbatim; unsanitized HTML never reaches the DOM |
 | `build_prompt` raises | the submit fails with that exception; no prompt is sent |
+| A `cancel` the agent does not act on | the turn ends with its ordinary outcome and no `cancelled`; the request left no trace, and can be repeated |
 
 Two of these are worth planning around. A dropped socket is currently
 **silent** — the box fires a `disconnected` event but draws nothing, so a server

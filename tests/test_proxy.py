@@ -119,6 +119,23 @@ async def test_submit_carries_its_ref(start_scripted):
     assert messages[0]["ref"] == "c-42"
 
 
+async def test_cancel_names_the_turn_and_carries_its_ref(start_scripted):
+    """A cancel is answered by an ack naming the turn taken back, and the turn ends on its own."""
+    proxy = await start_scripted("cancel-mid-turn.jsonl")
+    await proxy.submit("sleep for a while", ref="c-1")
+    stream = proxy.messages()
+    seen = [await stream.__anext__() for _ in range(3)]
+    assert [m["type"] for m in seen] == ["ack", "turn_start", "tool_use"]
+
+    await proxy.cancel(seen[0]["turn"]["id"], ref="x-1")
+    rest = [message async for message in stream]
+
+    assert [m["type"] for m in rest] == ["ack", "tool_result", "turn_end"]
+    assert rest[0]["ref"] == "x-1"
+    assert rest[0]["turn"]["id"] == "t-1"
+    assert rest[-1]["outcome"] == "cancelled"
+
+
 async def test_close_stops_the_process(start_scripted):
     proxy = await start_scripted("silent.jsonl")
     assert proxy.alive

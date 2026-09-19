@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from r2d2box import MemoryTranscriptStore, ProxyStartError, SubmitRejected
+from r2d2box import CancelRejected, MemoryTranscriptStore, ProxyStartError, SubmitRejected
 
 from fake_proxy import FakeProxy, FakeSpawner, RecordingSubscriber, wait_until
 
@@ -758,6 +758,130 @@ async def test_a_process_that_dies_before_the_ack_wakes_the_submit(fake_session)
         await pending
 
 
+# ---- cancelling a turn -------------------------------------------------------
+
+
+async def test_cancel_names_the_turn_by_the_proxys_own_id(fake_session):
+    """The session's `t-2` is the second process's `t-1`, and the proxy only knows the latter."""
+    session, spawner = fake_session()
+    first = await session.submit("what host is this?")
+    await spawner.latest.run_turn(first, text="r2d2")
+    await spawner.latest.drain()
+    await session.stop_process()
+
+    second = await session.submit("and the kernel?")
+    proxy = spawner.latest
+    await proxy.emit({"type": "turn_start", "turn": turn_ref("t-1")})
+    await proxy.drain()
+
+    await session.cancel(second)
+
+    assert second == "t-2"
+    assert proxy.cancels() == [{"type": "cancel", "turn": "t-1", "ref": "r2d2-3"}]
+
+
+async def test_cancel_is_broadcast_to_every_client_and_recorded_nowhere(started_session):
+    """The tab that clicked draws nothing of its own, so it needs the broadcast as much as the others."""
+    session, proxy, turn_id = await started_session()
+    asker, watcher = RecordingSubscriber(), RecordingSubscriber()
+    await session.attach(asker)
+    await session.attach(watcher)
+    await proxy.emit({"type": "turn_start", "turn": turn_ref(turn_id)})
+    await proxy.drain()
+
+    await session.cancel(turn_id)
+
+    for subscriber in (asker, watcher):
+        cancelling = subscriber.of_type("turn_cancel")
+        assert len(cancelling) == 1
+        assert cancelling[0]["turn"] == turn_ref(turn_id)
+        assert "ref" not in cancelling[0]
+        assert cancelling[0]["seq"] == subscriber.messages[-2]["seq"] + 1
+    assert "ack" not in asker.types()
+    assert session.turn_active, "taken is not done: the turn ends on its own turn_end"
+
+    await proxy.end_turn(turn_id, basis="marker:interrupted", outcome="cancelled")
+    await proxy.drain()
+
+    stored = (await session.snapshot())["turns"][-1]
+    assert stored["outcome"] == "cancelled"
+    assert [event["type"] for event in stored["events"]] == ["turn_start", "turn_end"]
+    assert not session.turn_active
+
+
+async def test_a_queued_turn_can_be_cancelled_before_it_starts(started_session):
+    """Acknowledged is open: a turn agent-proxy has not typed yet is still one it can withdraw."""
+    session, proxy, turn_id = await started_session()
+
+    await session.cancel(turn_id)
+
+    assert proxy.cancels()[0]["turn"] == "t-1"
+    await proxy.end_turn(turn_id, basis="cancel:withdrawn", outcome="cancelled")
+    await proxy.drain()
+    assert (await session.snapshot())["turns"][-1]["outcome"] == "cancelled"
+
+
+async def test_cancelling_a_turn_that_is_not_open_is_refused_without_asking_the_proxy(started_session):
+    session, proxy, turn_id = await started_session()
+    await proxy.run_turn(turn_id)
+    await proxy.drain()
+
+    with pytest.raises(CancelRejected, match="not open"):
+        await session.cancel(turn_id)
+    with pytest.raises(CancelRejected, match="not open"):
+        await session.cancel("t-99")
+    assert proxy.cancels() == []
+
+
+async def test_an_unowned_turn_cannot_be_cancelled(started_session):
+    """agent-proxy recognises a handed-back prompt by the text it typed, which an unowned turn has none of."""
+    session, proxy, turn_id = await started_session()
+    await proxy.run_turn(turn_id)
+    await proxy.emit({"type": "turn_start", "turn": turn_ref("t-bg", "unowned")})
+    await proxy.drain()
+
+    with pytest.raises(CancelRejected, match="not a person's"):
+        await session.cancel("t-2")
+    assert proxy.cancels() == []
+
+
+async def test_a_cancel_the_proxy_refuses_raises_and_reaches_no_client(started_session):
+    """The turn ended between the check and the proxy reading the command; only the caller hears."""
+    session, proxy, turn_id = await started_session()
+    subscriber = RecordingSubscriber()
+    await session.attach(subscriber)
+    proxy.auto_ack = False
+
+    pending = asyncio.ensure_future(session.cancel(turn_id))
+    await wait_until(lambda: proxy.cancels(), what="the cancel reaching agent-proxy")
+    await proxy.refuse_cancel(proxy.cancels()[0]["ref"], "turn t-1 has already ended")
+
+    with pytest.raises(CancelRejected, match="already ended"):
+        await pending
+    assert subscriber.types() == ["attached"]
+
+
+async def test_a_process_that_dies_before_answering_a_cancel_wakes_it(started_session):
+    session, proxy, turn_id = await started_session()
+    proxy.auto_ack = False
+
+    pending = asyncio.ensure_future(session.cancel(turn_id))
+    await wait_until(lambda: proxy.cancels(), what="the cancel reaching agent-proxy")
+    await proxy.end_stream()
+
+    with pytest.raises(ConnectionError, match="exited"):
+        await pending
+
+
+async def test_cancelling_after_the_process_is_gone_is_refused(started_session):
+    """The turn was ended on the process's way out, so there is nothing left to take back."""
+    session, proxy, turn_id = await started_session()
+    await session.stop_process()
+
+    with pytest.raises(CancelRejected, match="not open"):
+        await session.cancel(turn_id)
+
+
 # ---- resuming ----------------------------------------------------------------
 
 
@@ -959,7 +1083,7 @@ async def test_the_fake_proxy_matches_the_real_ones_surface():
     """`FakeProxy` is only a valid stand-in while it answers everything a session asks."""
     from r2d2box import AgentProxy
 
-    surface = ["session_id", "alive", "returncode", "submit", "request_status",
+    surface = ["session_id", "alive", "returncode", "submit", "cancel", "request_status",
                "messages", "close"]
     missing = [member for member in surface if not hasattr(FakeProxy(), member)]
     assert missing == []

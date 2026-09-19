@@ -34,6 +34,15 @@ BACKGROUND_TASK_PROMPT = (
     "Then reply with exactly: STARTED"
 )
 
+# A foreground tool the agent will sit in for a while, so a cancel lands
+# mid-tool — agent-proxy's own live fixture for the same scenario. `sleep`
+# itself is blocked, hence python.
+LONG_TOOL_PROMPT = (
+    "Use the Bash tool, NOT in background mode, to run exactly this command: "
+    'python3 -c "import time; time.sleep(40); print(1)"   '
+    "Then reply with exactly: DONE"
+)
+
 
 @pytest.fixture
 async def live_host(require_agent_proxy, tmp_path):  # noqa: F811  (the imported fixture)
@@ -183,3 +192,52 @@ async def test_a_background_tasks_command_and_output_reach_the_client(live_host)
 
     end = subscriber.of_type("task_end")[0]
     assert "finished" in (end.get("output") or ""), end
+
+
+async def wait_for(subscriber: RecordingSubscriber, predicate, what: str) -> None:
+    """Give a live turn time to produce the message `predicate` recognises."""
+    deadline = asyncio.get_running_loop().time() + TURN_TIMEOUT_S
+    while not any(predicate(m) for m in subscriber.messages):
+        assert asyncio.get_running_loop().time() < deadline, f"never saw {what}"
+        await asyncio.sleep(0.2)
+
+
+async def test_a_real_turn_can_be_taken_back_and_the_conversation_goes_on(live_host):
+    """A cancel mid-tool ends the turn as cancelled, and the next prompt is its own turn.
+
+    The second half is the part only a real process can check: agent-proxy
+    clears the prompt the inner claude may have handed back to its composer,
+    and a turn typed on top of a leftover would be submitted glued to it.
+    """
+    session = await live_host.session("live-topic", "s1")
+    subscriber = RecordingSubscriber()
+    await session.attach(subscriber)
+
+    turn_id = await session.submit(LONG_TOOL_PROMPT)
+    await wait_for(
+        subscriber,
+        lambda m: m.get("type") == "tool_use" and m.get("tool") == "Bash",
+        "the Bash tool starting",
+    )
+    await asyncio.sleep(2)
+    await session.cancel(turn_id)
+
+    stopping = subscriber.of_type("turn_cancel")
+    assert [m["turn"]["id"] for m in stopping] == [turn_id]
+    assert "ack" not in subscriber.types()
+
+    await wait_for(subscriber, lambda m: m.get("type") == "turn_end", "the turn ending")
+    end = subscriber.of_type("turn_end")[0]
+    assert end["turn"]["id"] == turn_id
+    assert end["outcome"] == "cancelled", end
+    assert end["basis"].startswith(("marker:interrupted", "cancel:")), end["basis"]
+    assert not session.turn_active
+
+    await run_turn(session, "Reply with exactly: AFTER")
+
+    turns = (await session.snapshot())["turns"]
+    assert [turn["outcome"] for turn in turns] == ["cancelled", "success"]
+    replies = "".join(
+        event.get("text", "") for event in turns[1]["events"] if event.get("type") == "text"
+    )
+    assert "AFTER" in replies.upper()

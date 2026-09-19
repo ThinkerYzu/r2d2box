@@ -92,6 +92,10 @@ class SubmitRejected(RuntimeError):
     """agent-proxy refused a submit, so no turn is coming for it."""
 
 
+class CancelRejected(RuntimeError):
+    """The turn named cannot be cancelled: not open, not a person's, or not this process's."""
+
+
 @dataclass
 class _PendingSubmit:
     """A submit waiting for the `ack` that will name its turn.
@@ -168,6 +172,10 @@ class Session:
         self._proxy_turn_ids: dict[str, str] = {}
         # Submits still waiting for their `ack`, by the ref each carried.
         self._pending: dict[str, _PendingSubmit] = {}
+        # Cancels still waiting for their `ack` or `error`, by ref. Nothing
+        # about the turn is kept here: the answer names it, in the proxy's
+        # numbering, and `_localize_turn` translates that like any message.
+        self._pending_cancels: dict[str, asyncio.Future[None]] = {}
         # Calls inside `submit`, whether or not they have reached agent-proxy
         # yet. Counted separately from `_pending` because the slow part of a
         # submit — assembling the prompt, spawning a process — happens before a
@@ -372,6 +380,60 @@ class Session:
             ) from exc
         finally:
             self._pending.pop(ref, None)
+
+    async def cancel(self, turn_id: str) -> None:
+        """Take turn `turn_id` back: withdraw it if queued, interrupt it if running.
+
+        `turn_id` is this conversation's id, the one `submit` returned and
+        every message of the turn carries. Returns once agent-proxy has taken
+        the request, which is before the turn is over: the turn still ends on
+        its own `turn_end`, with `outcome: "cancelled"` if the interruption
+        took effect, and the ordinary outcome if the agent had already
+        finished — a single `Esc` on a busy pty is sometimes not seen, and
+        the turn then ends however it really ends. A `turn_cancel` broadcast
+        tells every attached client the request was taken, so the tab that
+        asked and the tabs only watching learn it the same way.
+
+        Only a person's turn can be cancelled. An unowned turn has no prompt
+        of its own for agent-proxy to recognise handed back, and a turn from
+        a process that has since exited was already ended on its way out.
+        Raises `CancelRejected` for a turn that is not open, not a person's,
+        or not the running process's, `ConnectionError` if the process died
+        or never answered.
+        """
+        if self._closed:
+            raise ConnectionError(f"session {self.topic}/{self.name} is closed")
+        async with self._start_lock:
+            turn = self._open_turns.get(turn_id)
+            if turn is None:
+                raise CancelRejected(f"turn {turn_id} is not open")
+            if turn.kind != "user":
+                raise CancelRejected(f"turn {turn_id} is not a person's turn")
+            proxy_turn_id = next(
+                (proxy_id for proxy_id, own in self._proxy_turn_ids.items() if own == turn_id),
+                None,
+            )
+            proxy = self._proxy
+            if proxy is None or not proxy.alive or proxy_turn_id is None:
+                raise CancelRejected(f"turn {turn_id} has no running process to cancel it")
+            self._ref_counter += 1
+            ref = f"r2d2-{self._ref_counter}"
+            future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+            self._pending_cancels[ref] = future
+            try:
+                await proxy.cancel(proxy_turn_id, ref)
+            except BaseException:
+                self._pending_cancels.pop(ref, None)
+                raise
+
+        try:
+            await asyncio.wait_for(future, ACK_TIMEOUT_S)
+        except asyncio.TimeoutError as exc:
+            raise ConnectionError(
+                f"agent-proxy did not answer a cancel within {ACK_TIMEOUT_S:.0f}s"
+            ) from exc
+        finally:
+            self._pending_cancels.pop(ref, None)
 
     def open_with(self, opening: Callable[[], Awaitable[None]]) -> None:
         """Run `opening` as this session's first act, before any submit it races.
@@ -606,6 +668,21 @@ class Session:
                     self._outstanding = dict(outstanding)
 
                 kind = message.get("type")
+                ref = str(message.get("ref"))
+                if kind == "ack" and ref in self._pending_cancels:
+                    # A cancel's answer, not a submit's: it names the turn
+                    # being taken back rather than a new one. Consumed like
+                    # any ack, and what the clients need from it — that the
+                    # turn is stopping — goes out as `turn_cancel` from inside.
+                    await self._confirm_cancel(message)
+                    return
+                if kind == "error" and ref in self._pending_cancels:
+                    # A refused cancel is that one caller's business, like a
+                    # refused submit is, and unlike one it is not also
+                    # broadcast: it would land in the transcript of the very
+                    # turn that is still running.
+                    self._reject_pending_cancel(message)
+                    return
                 if kind == "ack":
                     # Claimed, then dropped: the ack exists to bind a ref to a
                     # turn id, and the ref is r2d2box's own bookkeeping rather
@@ -787,6 +864,46 @@ class Session:
                 SubmitRejected(str(message.get("error", "agent-proxy rejected the prompt")))
             )
 
+    async def _confirm_cancel(self, message: dict[str, Any]) -> None:
+        """Wake the `cancel` an `ack` answers, and tell every client the turn is stopping.
+
+        The caller holds `_lock`. The `turn_cancel` broadcast is the request's
+        one visible trace until the `turn_end` arrives, which can be seconds
+        later while the inner claude aborts a tool — and the tab that asked
+        needs it as much as the others, since it draws nothing on its own
+        (the same rule as `turn_prompt`). It is not recorded as an event: the
+        `turn_end`'s outcome is the durable fact, and a request the agent did
+        not act on is not a fact about the conversation at all.
+
+        Broadcast before waking the caller, for the reason `_claim_turn`
+        gives: `cancel` returning should mean every client has been told.
+        """
+        future = self._pending_cancels.get(str(message.get("ref")))
+        turn_id = _turn_id(message)
+        if turn_id is not None:
+            turn = self._open_turns.get(turn_id)
+            await self._broadcast_locked({
+                "type": "turn_cancel",
+                "turn": {"id": turn_id, "kind": turn.kind if turn else _turn_kind(message) or "user"},
+                **self._envelope(),
+            })
+        if future is not None and not future.done():
+            future.set_result(None)
+
+    def _reject_pending_cancel(self, message: dict[str, Any]) -> None:
+        """Fail the `cancel` an `error` is answering.
+
+        The caller holds `_lock`. agent-proxy refuses a cancel for a turn
+        that has already ended, that it does not know, or that is unowned;
+        `cancel` checks all three first, so reaching here means the turn ended
+        between the check and the proxy reading the command.
+        """
+        future = self._pending_cancels.get(str(message.get("ref")))
+        if future is not None and not future.done():
+            future.set_exception(
+                CancelRejected(str(message.get("error", "agent-proxy refused the cancel")))
+            )
+
     def _turn_for(self, message: dict[str, Any]) -> Turn | None:
         """The turn a message belongs in, or None if it belongs in no transcript.
 
@@ -856,7 +973,7 @@ class Session:
         """
         if self._proxy is not proxy:
             return
-        self._fail_pending_submits(ConnectionError("agent-proxy exited"))
+        self._fail_pending_commands(ConnectionError("agent-proxy exited"))
         # Reap the process before announcing it: EOF on stdout is not the exit.
         #
         # The child closes stdout on its way out and is reaped some moments
@@ -907,12 +1024,16 @@ class Session:
         await self._store.append_turn(self.topic, self.name, turn)
         await self._broadcast_locked(ending)
 
-    def _fail_pending_submits(self, error: BaseException) -> None:
-        """Wake every `submit` still waiting for an ack that is no longer coming."""
+    def _fail_pending_commands(self, error: BaseException) -> None:
+        """Wake every `submit` and `cancel` still waiting for an answer that is no longer coming."""
         for pending in self._pending.values():
             if not pending.future.done():
                 pending.future.set_exception(error)
         self._pending.clear()
+        for future in self._pending_cancels.values():
+            if not future.done():
+                future.set_exception(error)
+        self._pending_cancels.clear()
 
     async def _broadcast_locked(self, message: dict[str, Any]) -> None:
         """Send one message to every subscriber, dropping the ones that fail.
@@ -1026,7 +1147,7 @@ class Session:
         self._closed = True
         await self._cancel_opening()
         await self._stop_process()
-        self._fail_pending_submits(ConnectionError("session closed"))
+        self._fail_pending_commands(ConnectionError("session closed"))
         async with self._lock:
             await self._broadcast_locked({"type": "session_closed", **self._envelope()})
             self._subscribers.clear()

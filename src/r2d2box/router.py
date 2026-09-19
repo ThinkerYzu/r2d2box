@@ -44,7 +44,7 @@ from .host import (
     OpeningPrompt,
 )
 from .proxy import ProxyStartError
-from .session import ActivityCallback, BuildPrompt, Session, SubmitRejected
+from .session import ActivityCallback, BuildPrompt, CancelRejected, Session, SubmitRejected
 from .store import TranscriptStore
 
 _log = logging.getLogger(__name__)
@@ -215,6 +215,8 @@ class _ClientConnection:
             await self._attach(command)
         elif kind == "submit":
             await self._submit(command)
+        elif kind == "cancel":
+            await self._cancel(command)
         elif kind == "status_query":
             await self._status_query()
         elif kind == "detach":
@@ -285,6 +287,33 @@ class _ClientConnection:
             # prompt.
             _log.exception("r2d2box: submit to %s/%s failed", session.topic, session.name)
             await self._error(f"the prompt failed: {exc}")
+
+    async def _cancel(self, command: dict[str, Any]) -> None:
+        """Take a turn back, and let the broadcast report it.
+
+        As with `submit`, nothing is sent back on success: the session
+        broadcasts `turn_cancel` once agent-proxy has taken the request, and
+        the turn's own `turn_end` says what came of it. A refusal is this
+        client's business alone and comes back as an error.
+        """
+        session = self._session
+        if session is None:
+            await self._error("attach to a session before cancelling a turn")
+            return
+
+        turn_id = command.get("turn")
+        if not isinstance(turn_id, str) or not turn_id:
+            await self._error("cancel needs a non-empty `turn`")
+            return
+
+        try:
+            await session.cancel(turn_id)
+        except (CancelRejected, ConnectionError) as exc:
+            _log.info(
+                "r2d2box: cancel of %s in %s/%s was not accepted: %s",
+                turn_id, session.topic, session.name, exc,
+            )
+            await self._error(f"the turn was not cancelled: {exc}")
 
     async def _status_query(self) -> None:
         """Answer with the session's live state, for a client reconciling after a gap."""

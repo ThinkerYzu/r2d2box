@@ -30,11 +30,16 @@ from r2d2box import AgentConfig, AgentHost
 class FakeProxy:
     """A message stream a test writes by hand, with `AgentProxy`'s surface.
 
-    `session_id`, `alive`, `returncode`, `submit`, `request_status`,
+    `session_id`, `alive`, `returncode`, `submit`, `cancel`, `request_status`,
     `messages()` and `close()` all behave as the real thing's do — a session
     cannot tell the two apart. What is extra is `emit`, `end_stream`, the
     `submits` list recording everything written to it, and the `acked` list of
     turn ids it has minted.
+
+    A `cancel` is acknowledged under the same `auto_ack` as a submit, and
+    nothing more happens: the real proxy ends the turn once the inner claude
+    is seen to stop, and a test plays that part with `run_turn(...,
+    outcome="cancelled")` or `end_turn` when it is ready to.
 
     Turn ids restart at `t-1` for every new `FakeProxy`, exactly as
     agent-proxy's do, which is what makes a session outliving its process
@@ -91,6 +96,13 @@ class FakeProxy:
         self.submits.append({"type": "submit", "text": text, "ref": ref})
         if self.auto_ack:
             await self.ack(ref)
+
+    async def cancel(self, turn: str, ref: str) -> None:
+        if not self._alive:
+            raise ConnectionError("agent-proxy is not running")
+        self.submits.append({"type": "cancel", "turn": turn, "ref": ref})
+        if self.auto_ack:
+            await self.ack_cancel(turn, ref)
 
     async def request_status(self, ref: str) -> None:
         if not self._alive:
@@ -155,6 +167,37 @@ class FakeProxy:
         """Refuse a submit the way agent-proxy does: an `error` with its ref, no ack."""
         await self.emit({"type": "error", "error": error, "ref": ref})
 
+    async def ack_cancel(self, turn_id: str, ref: str) -> None:
+        """Acknowledge a cancel: an `ack` naming the turn being taken back."""
+        await self.emit(
+            {"type": "ack", "turn": {"id": turn_id, "kind": "user"}, "ref": ref}
+        )
+
+    async def refuse_cancel(self, ref: str, error: str = "turn t-9 cannot be cancelled") -> None:
+        """Refuse a cancel the way agent-proxy does: an `error` with its ref, no ack."""
+        await self.emit({"type": "error", "error": error, "ref": ref})
+
+    def cancels(self) -> list[dict[str, Any]]:
+        """Every `cancel` command written to this proxy, in order."""
+        return [command for command in self.submits if command["type"] == "cancel"]
+
+    async def end_turn(
+        self,
+        turn_id: str,
+        *,
+        kind: str = "user",
+        basis: str = "marker:turn_duration",
+        outcome: str = "success",
+    ) -> None:
+        """Emit a turn's `turn_end` alone, for a turn a test started by hand."""
+        await self.emit({
+            "type": "turn_end",
+            "turn": {"id": turn_id, "kind": kind},
+            "basis": basis,
+            "outcome": outcome,
+            "usage": {},
+        })
+
     async def run_turn(
         self,
         turn_id: str,
@@ -167,13 +210,7 @@ class FakeProxy:
         turn = {"id": turn_id, "kind": kind}
         await self.emit({"type": "turn_start", "turn": turn})
         await self.emit({"type": "text", "turn": turn, "text": text})
-        await self.emit({
-            "type": "turn_end",
-            "turn": turn,
-            "basis": "marker:turn_duration",
-            "outcome": outcome,
-            "usage": {},
-        })
+        await self.end_turn(turn_id, kind=kind, outcome=outcome)
 
     async def end_stream(self) -> None:
         """Close the stream as a dying process does: EOF first, still unreaped.

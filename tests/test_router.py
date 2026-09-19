@@ -244,6 +244,56 @@ async def test_a_submit_is_acknowledged_by_the_turn_start_every_client_sees(moun
     assert started["turn"]["id"] == prompt["turn"]["id"] == "t-1"
 
 
+async def test_a_cancel_is_reported_by_the_turn_cancel_every_client_sees(mounted):
+    """As with a submit, no private reply: the watching tab learns the turn is stopping too."""
+    app, box = mounted()
+
+    async with websocket(app, WS) as asker, websocket(app, WS) as watcher:
+        await attach(asker)
+        await attach(watcher)
+        await asker.send_json({"type": "submit", "text": "count to a million"})
+        await wait_until(lambda: ("bug-1", "s1") in box.host.proxies, what="a process")
+        proxy = box.host.proxies[("bug-1", "s1")]
+        await wait_until(lambda: proxy.submits, what="the submit reaching agent-proxy")
+        await proxy.emit({"type": "turn_start", "turn": {"id": "t-1", "kind": "user"}})
+        for connection in (asker, watcher):
+            assert (await connection.receive_json())["type"] == "turn_prompt"
+            assert (await connection.receive_json())["type"] == "turn_start"
+
+        await asker.send_json({"type": "cancel", "turn": "t-1"})
+        await wait_until(lambda: proxy.cancels(), what="the cancel reaching agent-proxy")
+        stopping = [await asker.receive_json(), await watcher.receive_json()]
+
+        await proxy.end_turn("t-1", basis="marker:interrupted", outcome="cancelled")
+        ended = [await asker.receive_json(), await watcher.receive_json()]
+
+    assert proxy.cancels() == [{"type": "cancel", "turn": "t-1", "ref": "r2d2-2"}]
+    for message in stopping:
+        assert message["type"] == "turn_cancel"
+        assert message["turn"] == {"id": "t-1", "kind": "user"}
+        assert message["seq"] == 3
+    for message in ended:
+        assert message["type"] == "turn_end"
+        assert message["outcome"] == "cancelled"
+
+
+async def test_a_cancel_the_session_refuses_is_reported_to_the_client_that_sent_it(mounted):
+    app, box = mounted()
+
+    async with websocket(app, WS) as connection:
+        await attach(connection)
+        await connection.send_json({"type": "cancel", "turn": "t-7"})
+        reported = await connection.receive_json()
+        await connection.send_json({"type": "cancel"})
+        malformed = await connection.receive_json()
+
+    assert reported["type"] == "error"
+    assert reported["scope"] == "connection"
+    assert "not open" in reported["error"]
+    assert "non-empty `turn`" in malformed["error"]
+    assert box.host.spawns == [], "a refused cancel starts no process"
+
+
 async def test_a_client_that_names_no_session_gets_one_the_host_has_opened(mounted):
     """The path an opening prompt exists for: nobody named the session, so nobody could prime it.
 
@@ -434,6 +484,7 @@ async def test_a_dead_agent_proxy_is_announced_to_every_attached_client(mounted)
     [
         ({"type": "submit", "text": "hello"}, "attach to a session"),
         ({"type": "status_query"}, "attach to a session"),
+        ({"type": "cancel", "turn": "t-1"}, "attach to a session"),
         ({"type": "attach"}, "non-empty `topic`"),
         ({"type": "attach", "topic": "bug-1", "session": 7}, "non-empty string"),
         ({"type": "wat"}, "unknown command type"),

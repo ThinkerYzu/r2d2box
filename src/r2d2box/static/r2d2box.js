@@ -15,7 +15,9 @@
 // task set arrive from the session and are replaced, never accumulated. A
 // turn another tab started disables this tab's input, and a task that finished
 // while the socket was down cannot leave the input stuck. A monitor is the one
-// kind of task that does not block the input, because it may never end.
+// kind of task that does not block the input, because it may never end. The
+// Stop button follows the same rule: it acts on the turns the server says are
+// open, and "stopping" is the `turn_cancel` broadcast, not the click.
 //
 // **An `attached` message is a reset point, not an update.** The transcript in
 // it is authoritative and `seq` may have restarted, so it replaces what is on
@@ -447,6 +449,11 @@
       this.el.classList.add('r2d2-turn-failed');
       var reason = message.error ? ': ' + message.error : '';
       this.el.appendChild(make(this.doc, 'div', 'r2d2-note', 'turn ended in error' + reason));
+    } else if (message.outcome === 'cancelled') {
+      // Stopped on purpose, so neither the error color nor silence: a turn
+      // that ends without an answer and says nothing reads as a broken one.
+      this.el.classList.add('r2d2-turn-cancelled');
+      this.el.appendChild(make(this.doc, 'div', 'r2d2-note', 'turn cancelled'));
     }
   };
 
@@ -488,6 +495,10 @@
     this.turns = {};
     this.turnOrder = [];
     this.openTurns = {};
+    // Open turns a `turn_cancel` has been broadcast for, id to true. Set from
+    // the server's message and never from the click, so a tab that only
+    // watches shows "Stopping" at the same moment as the one that asked.
+    this.cancelling = {};
     // Outstanding background tasks, id to kind. The kind decides whether one
     // gates the composer; see `ENDLESS_TASK_KINDS`.
     this.tasks = {};
@@ -524,14 +535,21 @@
     this.inputEl.setAttribute('placeholder', 'Ask the agent…');
     this.sendEl = make(this.doc, 'button', 'r2d2-send', 'Send');
     this.sendEl.setAttribute('type', 'button');
+    // Shown only while there is a turn to stop. A button that is present and
+    // disabled most of the time is furniture, and the box draws the
+    // conversation and nothing else.
+    this.stopEl = make(this.doc, 'button', 'r2d2-stop', 'Stop');
+    this.stopEl.setAttribute('type', 'button');
 
     this.composerEl.appendChild(this.badgeEl);
     this.composerEl.appendChild(this.inputEl);
+    this.composerEl.appendChild(this.stopEl);
     this.composerEl.appendChild(this.sendEl);
     this.el.appendChild(this.messagesEl);
     this.el.appendChild(this.composerEl);
 
     this.sendEl.addEventListener('click', function () { self.submit(); });
+    this.stopEl.addEventListener('click', function () { self.cancel(); });
     this.inputEl.addEventListener('keydown', function (event) {
       // Enter sends and Shift+Enter breaks the line, which is what both apps
       // this replaces already do. `isComposing` is what keeps an IME's
@@ -688,6 +706,9 @@
       this.openTurns[turnIdOf(message)] = true;
     } else if (type === 'turn_end') {
       delete this.openTurns[turnIdOf(message)];
+      delete this.cancelling[turnIdOf(message)];
+    } else if (type === 'turn_cancel') {
+      this.cancelling[turnIdOf(message)] = true;
     } else if (type === 'task_start') {
       if (message.task && message.task.id) {
         this.tasks[message.task.id] = message.task.kind || DEFAULT_TASK_KIND;
@@ -701,8 +722,11 @@
       this.processAlive = false;
     } else if (type === 'turn_prompt') {
       // The prompt is on screen now, so there is nothing left to hand back if
-      // a later command of this connection's is refused.
+      // a later command of this connection's is refused. The turn is open
+      // from here too — the server has held it open since the ack — so the
+      // composer blocks on it, and Stop can withdraw it before it even runs.
       this.pendingText = null;
+      this.openTurns[turnIdOf(message)] = true;
     }
     this.draw(message);
     this.refreshComposer();
@@ -857,6 +881,7 @@
     this.turns = {};
     this.turnOrder = [];
     this.openTurns = {};
+    this.cancelling = {};
     this.tasks = {};
     this.taskBlocks = {};
     this.statusEl = null;
@@ -982,6 +1007,45 @@
     this.refreshComposer();
   };
 
+  /**
+   * Ask the session to take back every open turn a person started.
+   *
+   * One `cancel` per turn, because agent-proxy stops only the turn it is
+   * named — a prompt queued behind the running one would otherwise start the
+   * moment it stopped, which is not what a person pressing Stop means. A turn
+   * already being stopped is not asked again. Nothing is drawn here: the
+   * session broadcasts `turn_cancel` once the request is taken, and the
+   * turn's own `turn_end` says what came of it. Returns how many were asked.
+   */
+  Box.prototype.cancel = function () {
+    var asked = 0;
+    for (var id in this.stoppableTurns()) {
+      if (this.send({ type: 'cancel', turn: id })) asked += 1;
+    }
+    if (!asked && Object.keys(this.openTurns).length) {
+      this.appendNote('not connected — the turn was not stopped');
+    }
+    return asked;
+  };
+
+  /**
+   * The open turns Stop would act on, id to true.
+   *
+   * A turn the server says is open but this tab has never drawn — one it
+   * attached during — has no known kind and is asked anyway; the server
+   * refuses the ones it cannot stop, and a refusal costs one note.
+   */
+  Box.prototype.stoppableTurns = function () {
+    var stoppable = {};
+    for (var id in this.openTurns) {
+      if (this.cancelling[id]) continue;
+      var turn = this.turns[id];
+      if (turn && turn.kind !== 'user') continue;
+      stoppable[id] = true;
+    }
+    return stoppable;
+  };
+
   /** True while a task is outstanding that is expected to finish on its own. */
   Box.prototype.hasEndingTask = function () {
     for (var id in this.tasks) {
@@ -1006,10 +1070,17 @@
     var busy = Object.keys(this.openTurns).length > 0;
     var waiting = !busy && this.hasEndingTask();
     var blocked = busy || waiting;
+    var stoppable = Object.keys(this.stoppableTurns()).length > 0;
+    // Every open turn is being stopped: a turn nobody has asked about is
+    // still "Working", however many others are on their way out.
+    var stopping = busy && !stoppable && Object.keys(this.cancelling).length > 0;
 
     this.inputEl.disabled = blocked;
     this.sendEl.disabled = blocked;
-    if (busy) this.showStatus('Working', false);
+    this.stopEl.style.display = busy ? '' : 'none';
+    this.stopEl.disabled = !stoppable;
+    if (stopping) this.showStatus('Stopping', false);
+    else if (busy) this.showStatus('Working', false);
     else if (waiting) this.showStatus('Waiting for background tasks', true);
     else this.hideStatus();
     this.pollStatusWhile(blocked);

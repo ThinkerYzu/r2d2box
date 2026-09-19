@@ -19,6 +19,8 @@ The script is JSON-lines, one directive per line, run in order:
 | `emit` | write `message`, stamping `seq` and `outstanding` if absent |
 | `await_submit` | block until a `submit` arrives; remember its `ref` |
 | `ack` | acknowledge the remembered submit, minting the next turn id |
+| `await_cancel` | block until a `cancel` arrives; remember its `ref` and `turn` |
+| `ack_cancel` | acknowledge the remembered cancel, naming the turn it named |
 | `oversize` | write one line of `bytes` junk — for the read-buffer limit |
 | `junk` | write `text` as a line, valid JSON or not |
 | `exit` | stop, closing stdout |
@@ -63,6 +65,7 @@ class _State:
         self.seq = 0
         self.turns = 0
         self.pending_ref: str | None = None
+        self.cancel_turn: str | None = None
 
 
 def _run(state: _State, directive: dict) -> bool:
@@ -77,6 +80,14 @@ def _run(state: _State, directive: dict) -> bool:
         _emit(state, {
             "type": "ack",
             "turn": {"id": f"t-{state.turns}", "kind": "user"},
+            "ref": state.pending_ref,
+        })
+    elif op == "await_cancel":
+        state.pending_ref, state.cancel_turn = _await_command("cancel")
+    elif op == "ack_cancel":
+        _emit(state, {
+            "type": "ack",
+            "turn": {"id": state.cancel_turn, "kind": "user"},
             "ref": state.pending_ref,
         })
     elif op == "oversize":
@@ -101,20 +112,25 @@ def _emit(state: _State, message: dict) -> None:
 
 
 def _await_submit() -> str | None:
-    """Block until a `submit` command arrives on stdin; return its `ref`.
+    """Block until a `submit` command arrives on stdin; return its `ref`."""
+    return _await_command("submit")[0]
+
+
+def _await_command(kind: str) -> tuple[str | None, str | None]:
+    """Block until a command of type `kind` arrives on stdin; return its `ref` and `turn`.
 
     Other commands are skipped rather than answered — a fixture that wants a
-    `state` reply emits one itself. Returns None if stdin closes first, which
-    is how the shutdown test reaches the end of its script.
+    `state` reply emits one itself. Returns `(None, None)` if stdin closes
+    first, which is how the shutdown test reaches the end of its script.
     """
     for line in sys.stdin:
         try:
             command = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if command.get("type") == "submit":
-            return command.get("ref")
-    return None
+        if command.get("type") == kind:
+            return command.get("ref"), command.get("turn")
+    return None, None
 
 
 def _write_oversize(size: int) -> None:

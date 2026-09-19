@@ -175,6 +175,19 @@ class AgentProxy:
         """
         await self.send({"type": "submit", "text": text, "ref": ref})
 
+    async def cancel(self, turn: str, ref: str) -> None:
+        """Ask agent-proxy to take turn `turn` back, tagged with `ref` for its answer.
+
+        `turn` is agent-proxy's own id for the turn — the one its `ack`
+        carried — not a session's renumbered one. The answer is an `ack`
+        naming that turn if the request was taken, or an `error` if the turn
+        cannot be cancelled (already ended, unknown, or unowned); either way it
+        carries `ref`, and `ref` is required here for the same reason it is on
+        `submit`. Taken is not done: the turn ends on its own `turn_end`, with
+        `outcome: "cancelled"` if the interruption took effect.
+        """
+        await self.send({"type": "cancel", "turn": turn, "ref": ref})
+
     async def request_status(self, ref: str) -> None:
         """Ask for a `state` message describing every unfinished turn and task.
 
@@ -277,9 +290,9 @@ class AgentProxy:
         """Stop the process and wait for it to go, killing it if it will not.
 
         Safe to call more than once, and safe on a process that has already
-        exited. There is no cancellation in the protocol, so a turn in flight is
-        lost rather than finished — the caller decides whether that is
-        acceptable before calling.
+        exited. This is not `cancel`: a turn in flight is lost rather than
+        finished, with no `turn_end` for it — the caller decides whether that
+        is acceptable before calling.
         """
         await _shut_down(self._process, self._stderr_task)
         self._stderr_task = None
