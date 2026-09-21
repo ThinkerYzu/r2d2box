@@ -535,10 +535,10 @@
     this.inputEl.setAttribute('placeholder', 'Ask the agent…');
     this.sendEl = make(this.doc, 'button', 'r2d2-send', 'Send');
     this.sendEl.setAttribute('type', 'button');
-    // Shown only while there is a turn to stop, and Send is hidden for as
-    // long as it is: a button that is present and disabled most of the time
-    // is furniture, and the box draws the conversation and nothing else.
-    // Send keeps its space while hidden — see `refreshComposer`.
+    // Stop shares Send's place rather than sitting beside it, and takes it
+    // whenever there is a turn to stop: a button that is present and disabled
+    // most of the time is furniture, and the box draws the conversation and
+    // nothing else. Which of the two holds the slot is `refreshComposer`'s.
     this.stopEl = make(this.doc, 'button', 'r2d2-stop', 'Stop');
     this.stopEl.setAttribute('type', 'button');
 
@@ -1067,9 +1067,11 @@
    * for the rest of the conversation, so waiting for one would be waiting
    * forever.
    *
-   * `busy` and not `blocked` is what swaps the buttons: a background task
-   * holds the input without a turn to stop, and hiding Send there would leave
-   * the composer with no button at all.
+   * Send and Stop share one slot, and `busy && stoppable` is what decides
+   * which of them is in it — not `blocked`, and not `busy` alone. Send holds
+   * the slot greyed out in every state where stopping is not on offer and
+   * typing is not either: a background task with no turn behind it, an unowned
+   * turn, or every open turn already being stopped.
    */
   Box.prototype.refreshComposer = function () {
     var busy = Object.keys(this.openTurns).length > 0;
@@ -1080,15 +1082,16 @@
     // still "Working", however many others are on their way out.
     var stopping = busy && !stoppable && Object.keys(this.cancelling).length > 0;
 
+    // Stop replaces Send in the composer's one button slot, and only when it
+    // would do something; otherwise Send keeps the slot and `blocked` greys it
+    // out. `disabled` is set on both regardless of which is showing, so a host
+    // that restyles the slot cannot end up with a live button in a state that
+    // did not offer one.
+    var showStop = busy && stoppable;
     this.inputEl.disabled = blocked;
     this.sendEl.disabled = blocked;
-    // One button at a time: Send and Stop are never both live, since an open
-    // turn is exactly what disables the one and shows the other. Send is
-    // hidden rather than removed so that Stop stays where it is instead of
-    // sliding into the place a click aimed at Send is headed for — the box
-    // draws nothing on submit, so a second click there is a thing people do.
-    this.sendEl.style.visibility = busy ? 'hidden' : '';
-    this.stopEl.style.display = busy ? '' : 'none';
+    this.sendEl.style.display = showStop ? 'none' : '';
+    this.stopEl.style.display = showStop ? '' : 'none';
     this.stopEl.disabled = !stoppable;
     if (stopping) this.showStatus('Stopping', false);
     else if (busy) this.showStatus('Working', false);

@@ -584,6 +584,9 @@ test('turn_cancel says Stopping in every tab, and the cancelled ending frees the
   socket.deliver(broadcast(2, { type: 'turn_cancel', turn: turn('t-1') }));
   equal(textsOf(element, '.r2d2-status-text'), ['Stopping'], 'the broadcast is what says so');
   ok(stop.disabled, 'a turn already being stopped is not asked again');
+  equal(stop.style.display, 'none', 'so Stop gives the slot back');
+  const send = element.querySelector('.r2d2-send');
+  ok(send.style.display !== 'none' && send.disabled, 'to a greyed Send: nothing to stop, nothing to type');
   ok(input.disabled, 'and the composer stays blocked until the turn really ends');
 
   socket.deliver(broadcast(3, {
@@ -619,6 +622,7 @@ test('Stop asks for every open turn a person started, and not for a background o
   socket.deliver(broadcast(1, { type: 'turn_start', turn: turn('t-bg', 'unowned') }));
   const stop = element.querySelector('.r2d2-stop');
   ok(stop.disabled, 'an unowned turn cannot be cancelled, so there is nothing to click');
+  equal(stop.style.display, 'none', 'and nothing shown either');
 
   socket.deliver(broadcast(2, { type: 'turn_prompt', turn: turn('t-2'), text: 'and then?' }));
   ok(!stop.disabled, 'a person\'s turn queued behind it can be');
@@ -642,26 +646,42 @@ test('a refused cancel is a note, and Stop stays available', () => {
   equal(element.querySelectorAll('.r2d2-message').length, 1, 'the turn on screen is untouched');
 });
 
-test('Send and Stop are never both offered, and Send keeps its place while hidden', () => {
+test('Stop takes Send\'s place while a turn runs, and gives it back', () => {
   const { socket, element } = mountBox();
   const send = element.querySelector('.r2d2-send');
   const stop = element.querySelector('.r2d2-stop');
-  equal(send.style.visibility, '', 'idle: Send is the only button');
-  equal(stop.style.display, 'none', 'and Stop is not there');
+  equal(stop.style.display, 'none', 'idle: Send has the slot');
+  ok(send.style.display !== 'none', 'and it is showing');
 
   socket.deliver(broadcast(1, { type: 'turn_prompt', turn: turn('t-1'), text: 'go' }));
-  equal(send.style.visibility, 'hidden', 'a turn takes Send away rather than greying it');
-  equal(stop.style.display, '', 'Stop has it instead');
-  // Hidden and not removed: a click aimed at Send must not find Stop under it,
-  // and the box draws nothing on submit, so a second click there does happen.
-  ok(send.style.display !== 'none', 'Send still holds its slot, so Stop cannot slide into it');
+  equal(send.style.display, 'none', 'a turn takes Send out of the slot');
+  equal(stop.style.display, '', 'and gives it to Stop');
 
   socket.deliver(broadcast(2, { type: 'turn_end', turn: turn('t-1'), basis: 'marker' }));
-  equal(send.style.visibility, '', 'and it comes back when the turn ends');
-  equal(stop.style.display, 'none', 'as Stop goes');
+  equal(stop.style.display, 'none', 'the turn ends and Stop leaves');
+  ok(send.style.display !== 'none', 'Send has the slot again');
+  ok(!send.disabled, 'and is live');
 });
 
-test('a background task with no turn keeps Send, since there is nothing to stop', () => {
+test('a greyed Send holds the slot when there is nothing to stop', () => {
+  const { socket, element } = mountBox();
+  const send = element.querySelector('.r2d2-send');
+  const stop = element.querySelector('.r2d2-stop');
+
+  // An unowned turn is the server's work, not this person's, and cannot be
+  // cancelled — so the slot keeps a Send nobody can press rather than a Stop.
+  socket.deliver(broadcast(1, { type: 'turn_start', turn: turn('t-bg', 'unowned') }));
+  equal(stop.style.display, 'none', 'no Stop, because stopping is not on offer');
+  ok(send.style.display !== 'none', 'Send keeps the slot');
+  ok(send.disabled, 'greyed, because typing is not on offer either');
+
+  // A person's turn queued behind it can be stopped, so now Stop is worth the slot.
+  socket.deliver(broadcast(2, { type: 'turn_prompt', turn: turn('t-2'), text: 'and then?' }));
+  equal(stop.style.display, '', 'and it takes it');
+  equal(send.style.display, 'none', 'the slot holds one button, not two');
+});
+
+test('a background task with no turn keeps a greyed Send in the slot', () => {
   const { socket, element } = mountBox();
   const send = element.querySelector('.r2d2-send');
 
@@ -670,8 +690,8 @@ test('a background task with no turn keeps Send, since there is nothing to stop'
   }));
 
   ok(send.disabled, 'the composer is blocked while the task runs');
-  equal(send.style.visibility, '', 'but Send stays: hiding it would leave no button at all');
-  equal(element.querySelector('.r2d2-stop').style.display, 'none', 'and Stop is not offered');
+  ok(send.style.display !== 'none', 'but Send keeps the slot: there is no turn to stop');
+  equal(element.querySelector('.r2d2-stop').style.display, 'none', 'so no Stop is offered');
 });
 
 // ---- markdown ---------------------------------------------------------------
