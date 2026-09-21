@@ -144,7 +144,7 @@ await session.submit("why does it crash?")
 python3 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
 .venv/bin/pytest                             # 241 tests, ~1s; needs no `claude`
-node tests/js/run.js                         # the front-end's 54, on their own
+node tests/js/run.js                         # the front-end's 57, on their own
 R2D2BOX_RUN_LIVE=1 .venv/bin/pytest -m live  # 8 real conversations; needs agent-proxy and claude
 ```
 
