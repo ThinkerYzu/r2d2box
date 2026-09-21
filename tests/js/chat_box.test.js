@@ -642,6 +642,38 @@ test('a refused cancel is a note, and Stop stays available', () => {
   equal(element.querySelectorAll('.r2d2-message').length, 1, 'the turn on screen is untouched');
 });
 
+test('Send and Stop are never both offered, and Send keeps its place while hidden', () => {
+  const { socket, element } = mountBox();
+  const send = element.querySelector('.r2d2-send');
+  const stop = element.querySelector('.r2d2-stop');
+  equal(send.style.visibility, '', 'idle: Send is the only button');
+  equal(stop.style.display, 'none', 'and Stop is not there');
+
+  socket.deliver(broadcast(1, { type: 'turn_prompt', turn: turn('t-1'), text: 'go' }));
+  equal(send.style.visibility, 'hidden', 'a turn takes Send away rather than greying it');
+  equal(stop.style.display, '', 'Stop has it instead');
+  // Hidden and not removed: a click aimed at Send must not find Stop under it,
+  // and the box draws nothing on submit, so a second click there does happen.
+  ok(send.style.display !== 'none', 'Send still holds its slot, so Stop cannot slide into it');
+
+  socket.deliver(broadcast(2, { type: 'turn_end', turn: turn('t-1'), basis: 'marker' }));
+  equal(send.style.visibility, '', 'and it comes back when the turn ends');
+  equal(stop.style.display, 'none', 'as Stop goes');
+});
+
+test('a background task with no turn keeps Send, since there is nothing to stop', () => {
+  const { socket, element } = mountBox();
+  const send = element.querySelector('.r2d2-send');
+
+  socket.deliver(broadcast(1, {
+    type: 'task_start', task: { id: 'k-1', kind: 'command' }, command: 'sleep 5',
+  }));
+
+  ok(send.disabled, 'the composer is blocked while the task runs');
+  equal(send.style.visibility, '', 'but Send stays: hiding it would leave no button at all');
+  equal(element.querySelector('.r2d2-stop').style.display, 'none', 'and Stop is not offered');
+});
+
 // ---- markdown ---------------------------------------------------------------
 
 test('assistant markdown goes through marked and then DOMPurify', () => {

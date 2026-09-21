@@ -557,7 +557,7 @@ The structure those tests can rely on:
 | `.r2d2-thinking` | a collapsed thinking block |
 | `.r2d2-fold` | the container older blocks fold into |
 | `.r2d2-status` | the working indicator at the foot of the list |
-| `.r2d2-input`, `.r2d2-send`, `.r2d2-stop` | the composer; Stop is shown only while a turn is open |
+| `.r2d2-input`, `.r2d2-send`, `.r2d2-stop` | the composer; one of the two buttons is offered at a time — Stop only while a turn is open, and Send hidden (`visibility`, so its space is kept) for as long as it is |
 | `.r2d2-turn-cancelled` | a turn that ended because someone pressed Stop |
 
 ### Rendering, and what the box does not draw
@@ -583,7 +583,7 @@ back — a `completed` task reads as a success, `failed` as an error, and
 failure. The box finds a task by id wherever it was drawn, because a `task_end`
 often carries no turn at all by the time it arrives.
 
-**Stop** appears beside Send while a turn is open and sends one `cancel` per
+**Stop** takes Send's place while a turn is open and sends one `cancel` per
 open turn a person started — a prompt queued behind the running one would
 otherwise start the moment it stopped. The click itself draws nothing. The
 session broadcasts `turn_cancel` once agent-proxy has taken the request, and
@@ -593,7 +593,15 @@ cancelled rather than failed. A Stop the agent did not act on — one `Esc` on a
 busy pty is occasionally missed — ends with the ordinary outcome, and the
 button is back for another press. Background tasks are not stopped: `Esc`
 does not reach them, and a task the cancelled turn launched runs to its
-`task_end`.
+`task_end` — which is why Send is hidden on an open *turn* rather than on a
+blocked composer: a task holds the input with nothing to stop, and the composer
+would be left with no button at all.
+
+Send is hidden rather than removed, and a host restyling the composer should
+keep it that way. The box draws nothing when it submits, so a person who clicks
+Send and sees no change has reason to click again; if the hidden Send collapsed
+its slot, Stop would move into the place that second click is headed for and
+cancel the turn they had just asked for.
 
 ---
 

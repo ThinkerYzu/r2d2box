@@ -453,8 +453,10 @@
 
 .r2d2-send:hover { background: var(--r2d2-button-hover); }
 
-/* Beside Send while a turn runs, and gone otherwise (the box sets `display`).
- * Outlined rather than filled so the two are not confused at a glance. */
+/* In Send's place while a turn runs, and gone otherwise (the box sets
+ * `display` here and `visibility` on Send, so Send's slot stays reserved and
+ * Stop does not move into it). Outlined rather than filled so the two are not
+ * confused at a glance. */
 .r2d2-stop {
   align-self: flex-end;
   padding: var(--r2d2-gap) 16px;

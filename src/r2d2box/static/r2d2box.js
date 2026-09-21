@@ -535,9 +535,10 @@
     this.inputEl.setAttribute('placeholder', 'Ask the agent…');
     this.sendEl = make(this.doc, 'button', 'r2d2-send', 'Send');
     this.sendEl.setAttribute('type', 'button');
-    // Shown only while there is a turn to stop. A button that is present and
-    // disabled most of the time is furniture, and the box draws the
-    // conversation and nothing else.
+    // Shown only while there is a turn to stop, and Send is hidden for as
+    // long as it is: a button that is present and disabled most of the time
+    // is furniture, and the box draws the conversation and nothing else.
+    // Send keeps its space while hidden — see `refreshComposer`.
     this.stopEl = make(this.doc, 'button', 'r2d2-stop', 'Stop');
     this.stopEl.setAttribute('type', 'button');
 
@@ -1065,6 +1066,10 @@
    * Only work that will end by itself blocks the input. A monitor may watch
    * for the rest of the conversation, so waiting for one would be waiting
    * forever.
+   *
+   * `busy` and not `blocked` is what swaps the buttons: a background task
+   * holds the input without a turn to stop, and hiding Send there would leave
+   * the composer with no button at all.
    */
   Box.prototype.refreshComposer = function () {
     var busy = Object.keys(this.openTurns).length > 0;
@@ -1077,6 +1082,12 @@
 
     this.inputEl.disabled = blocked;
     this.sendEl.disabled = blocked;
+    // One button at a time: Send and Stop are never both live, since an open
+    // turn is exactly what disables the one and shows the other. Send is
+    // hidden rather than removed so that Stop stays where it is instead of
+    // sliding into the place a click aimed at Send is headed for — the box
+    // draws nothing on submit, so a second click there is a thing people do.
+    this.sendEl.style.visibility = busy ? 'hidden' : '';
     this.stopEl.style.display = busy ? '' : 'none';
     this.stopEl.disabled = !stoppable;
     if (stopping) this.showStatus('Stopping', false);
