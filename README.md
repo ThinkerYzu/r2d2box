@@ -3,14 +3,15 @@
 [![CI](https://github.com/ThinkerYzu/r2d2box/actions/workflows/ci.yml/badge.svg)](https://github.com/ThinkerYzu/r2d2box/actions/workflows/ci.yml)
 
 A chat box for AI agents, as a library: one server-side agent host and one
-front-end chat panel, so an app that wants to embed a live Claude agent doesn't
-have to build either.
+front-end chat panel, so an app that wants to embed a live agent — Claude Code
+or Codex — doesn't have to build either.
 
-The host app supplies what is genuinely its own — the MCP servers, the system
-prompt, the tool allowlist — and r2d2box supplies the rest: the `agent-proxy`
-subprocess and its turn correlation, the WebSocket that carries the message
-stream, the transcript store, and the JavaScript that renders messages, tool
-calls, and the prompt input into a `div` the page provides.
+The host app supplies what is genuinely its own — the system prompt, and under
+Claude Code the MCP servers and the tool allowlist — and r2d2box supplies the
+rest: the `agent-proxy` subprocess and its turn correlation, the WebSocket that
+carries the message stream, the transcript store, and the JavaScript that
+renders messages, tool calls, and the prompt input into a `div` the page
+provides.
 
 **Status:** complete. An application mounts the router and gets a WebSocket two
 tabs can share, session REST for its own furniture, and the chat box served
@@ -109,15 +110,16 @@ left work behind.
 | or `codex` on `$PATH` | the other agent agent-proxy drives, for `AgentConfig(agent="codex")` | the Codex CLI, signed in with ChatGPT; needs an agent-proxy newer than `v0.1.0` |
 | `uvicorn[standard]` | a plain `uvicorn` serves no WebSocket | pip, for the demo or your own server |
 
-**About agent-proxy.** r2d2box does not spawn `claude` itself, does not speak
-`stream-json`, and adds nothing to the turn protocol. It sits on
-[agent-proxy](https://github.com/ThinkerYzu/agent-proxy), which drives an
-interactive `claude` over a pty and states turn boundaries explicitly — every
-message carries a turn id, a kind, and the outstanding user/unowned/background
-counts. Its [API.md](https://github.com/ThinkerYzu/agent-proxy/blob/master/API.md)
-is the contract everything here is built on. What runs without either binary is
-the whole test suite: 260 tests pass with neither installed, because every layer
-is tested against a stand-in for the one below it.
+**About agent-proxy.** r2d2box does not spawn `claude` or `codex` itself, does
+not speak either one's wire format, and adds nothing to the turn protocol. It
+sits on [agent-proxy](https://github.com/ThinkerYzu/agent-proxy), which drives
+an interactive `claude` over a pty, or `codex app-server`, and states turn
+boundaries explicitly the same way for both — every message carries a turn id,
+a kind, and the outstanding user/unowned/background counts. Its
+[API.md](https://github.com/ThinkerYzu/agent-proxy/blob/master/API.md) is the
+contract everything here is built on. What runs without any of these binaries
+is the whole test suite: 260 tests pass with none installed, because every
+layer is tested against a stand-in for the one below it.
 
 ## Running the demo
 
@@ -195,8 +197,8 @@ mounts perfectly, then serves a 404 for every file the page asks for.
 
 Nothing goes to PyPI — r2d2box does not run without `agent-proxy`, which is
 released on GitHub rather than PyPI for the same reason: it does nothing without
-a `claude` binary it cannot declare as a dependency. Install a release from its
-artifact or straight from the tag:
+a `claude` or `codex` binary it cannot declare as a dependency. Install a
+release from its artifact or straight from the tag:
 
 ```bash
 pip install https://github.com/ThinkerYzu/r2d2box/releases/download/v0.1.0/r2d2box-0.1.0-py3-none-any.whl
