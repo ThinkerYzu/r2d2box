@@ -8,6 +8,7 @@ subprocess.
 
     R2D2BOX_LIVE_STORE   where transcripts go
     R2D2BOX_LIVE_CWD     the agent's working directory
+    R2D2BOX_LIVE_AGENT   `codex` to run codex; claude otherwise
 """
 
 from __future__ import annotations
@@ -21,14 +22,20 @@ from r2d2box import AgentConfig, FileTranscriptStore, R2D2Box
 
 WORKDIR = Path(os.environ["R2D2BOX_LIVE_CWD"])
 STORE = Path(os.environ["R2D2BOX_LIVE_STORE"])
+AGENT = os.environ.get("R2D2BOX_LIVE_AGENT") or None
 
 
 def agent_config(topic: str, session: str) -> AgentConfig:
     """The smallest, fastest real agent that can still answer a question."""
+    if AGENT == "codex":
+        extra_args = ["--sandbox", "read-only", "-c", "model_reasoning_effort=low"]
+    else:
+        extra_args = ["--model", "haiku"]
     return AgentConfig(
+        agent=AGENT,
         cwd=WORKDIR,
         append_system_prompt="Answer in as few words as possible.",
-        extra_args=["--model", "haiku"],
+        extra_args=extra_args,
     )
 
 

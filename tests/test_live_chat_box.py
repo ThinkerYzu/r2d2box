@@ -28,6 +28,7 @@ from pathlib import Path
 
 import pytest
 
+from test_live_codex import require_codex  # noqa: F401  (a fixture, used by name)
 from test_live_proxy import require_agent_proxy  # noqa: F401  (a fixture, used by name)
 
 pytestmark = pytest.mark.live
@@ -45,14 +46,17 @@ def free_port() -> int:
         return probe.getsockname()[1]
 
 
-@pytest.fixture
-def live_server(require_agent_proxy, tmp_path):  # noqa: F811  (the imported fixture)
+@pytest.fixture(params=["claude", "codex"])
+def live_server(request, tmp_path):
     """A real uvicorn serving `tests/live_app.py`, yielded as its base URL.
 
     Started as a subprocess rather than in-process because the point is a real
     socket: an ASGI client in the test's own loop is what the rest of the suite
-    already uses, and cannot be reached from `node`.
+    already uses, and cannot be reached from `node`. Run once per agent, each
+    skipped on its own when that agent is not installed.
     """
+    agent = request.param
+    request.getfixturevalue("require_codex" if agent == "codex" else "require_agent_proxy")
     if shutil.which("node") is None:
         pytest.skip("the chat box's live test needs node")
     workdir = tmp_path / "agent-cwd"
@@ -63,6 +67,7 @@ def live_server(require_agent_proxy, tmp_path):  # noqa: F811  (the imported fix
         os.environ,
         R2D2BOX_LIVE_CWD=str(workdir),
         R2D2BOX_LIVE_STORE=str(tmp_path / "transcripts"),
+        R2D2BOX_LIVE_AGENT=agent,
         PYTHONPATH=os.pathsep.join([str(TESTS_DIR), os.environ.get("PYTHONPATH", "")]),
     )
     server = subprocess.Popen(

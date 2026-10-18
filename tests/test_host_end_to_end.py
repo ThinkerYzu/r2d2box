@@ -137,7 +137,7 @@ async def test_a_killed_process_resumes_with_its_history(scripted_host, tmp_path
     await run_turn(host, "bug-1", "s1", "first question")
     session = await host.session("bug-1", "s1")
     await _wait_for_process_gone(session)
-    assert session.claude_session_id == "scripted-session-0001"
+    assert session.agent_session_id == "scripted-session-0001"
 
     await run_turn(host, "bug-1", "s1", "second question")
 

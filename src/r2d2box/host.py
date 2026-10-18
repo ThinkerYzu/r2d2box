@@ -21,7 +21,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from .config import AgentConfig
+from .config import AgentConfig, agent_of
 from .proxy import AgentProxy
 from .session import ENDLESS_TASK_KINDS, ActivityCallback, BuildPrompt, Session
 from .store import MemoryTranscriptStore, SessionInfo, TranscriptStore, preview_of
@@ -61,7 +61,7 @@ class AgentHost:
 
     Sessions are created here and never expire from the registry. An idle
     sweep stops the agent-proxy process behind a session but keeps the session
-    itself, which costs a few hundred bytes and keeps its claude session id —
+    itself, which costs a few hundred bytes and keeps its agent session id —
     the one piece of state a resume needs.
     """
 
@@ -156,14 +156,28 @@ class AgentHost:
         configuration at the moment a process is started, which is every
         respawn and not only the first.
         """
+        session: Session
 
         async def spawn(resume: str | None) -> AgentProxy:
             config = self._agent_config(topic, name)
             if inspect.isawaitable(config):
                 config = await config
+            # A config that now names a different agent starts over.
+            #
+            # The id belongs to the agent that minted it, and handing a claude
+            # session id to codex, or a codex thread id to claude, resumes
+            # nothing. The transcript stays in the store and on screen; only the
+            # new agent's memory of it is lost, as when a resume fails outright.
+            if resume and session.agent and session.agent != agent_of(config):
+                _log.warning(
+                    "session %s/%s: its agent changed from %s to %s; "
+                    "starting a new conversation instead of resuming %s",
+                    topic, name, session.agent, agent_of(config), resume,
+                )
+                resume = None
             return await self.start_proxy(config, resume, f"{topic}/{name}")
 
-        return Session(
+        session = Session(
             topic,
             name,
             spawn=spawn,
@@ -171,6 +185,7 @@ class AgentHost:
             build_prompt=self._build_prompt,
             on_activity=self._on_activity,
         )
+        return session
 
     async def start_proxy(
         self, config: AgentConfig, resume: str | None, tag: str

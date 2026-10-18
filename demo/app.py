@@ -3,6 +3,8 @@
     .venv/bin/python -m uvicorn demo.app:app --port 8790
     # then open http://localhost:8790/
 
+`R2D2BOX_DEMO_AGENT=codex` runs codex instead of claude.
+
 Everything here is what a real host supplies and nothing else: the agent's
 configuration, the topic keys, and the page the box is mounted into. The
 conversation — its process, its transcript, its fan-out and its front-end — is
@@ -26,6 +28,7 @@ from r2d2box import AgentConfig, FileTranscriptStore, R2D2Box
 
 DEMO_DIR = Path(__file__).parent
 TRANSCRIPTS = Path(os.environ.get("R2D2BOX_DEMO_STORE", DEMO_DIR / "transcripts"))
+AGENT = os.environ.get("R2D2BOX_DEMO_AGENT") or None
 
 
 def agent_config(topic: str, session: str) -> AgentConfig:
@@ -37,6 +40,7 @@ def agent_config(topic: str, session: str) -> AgentConfig:
     the agent what it is being asked about.
     """
     return AgentConfig(
+        agent=AGENT,
         cwd=DEMO_DIR,
         append_system_prompt=(
             f"You are the assistant in a demo chat panel, talking about {topic!r}. "

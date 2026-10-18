@@ -91,6 +91,27 @@ test('a failed tool is marked, and its result still lands in its own block', () 
   equal(textsOf(element, '.r2d2-tool-result'), ['exit 1'], 'a content list is flattened to text');
 });
 
+test('a codex tool call is summarized by what it acts on', () => {
+  const { socket, element } = mountBox(fakeMarkdown());
+
+  socket.deliver(broadcast(1, {
+    type: 'tool_use', turn: turn('t-1'), tool: 'fileChange', tool_use_id: 'fc-1',
+    input: { changes: [{ path: 'a.txt', kind: 'add' }, { path: 'b.txt', kind: 'update' }] },
+  }));
+  socket.deliver(broadcast(2, {
+    type: 'tool_use', turn: turn('t-1'), tool: 'mcpToolCall', tool_use_id: 'mcp-1',
+    input: { server: 'notes', tool: 'worklog_append', arguments: { text: 'hi' } },
+  }));
+  socket.deliver(broadcast(3, {
+    type: 'tool_use', turn: turn('t-1'), tool: 'webSearch', tool_use_id: 'ws-1',
+    input: { query: 'wayland fractional scaling' },
+  }));
+
+  equal(textsOf(element, '.r2d2-tool-summary'),
+    ['a.txt, b.txt', 'notes.worklog_append', 'wayland fractional scaling'],
+    'each header names its files, its tool, or its query rather than raw JSON');
+});
+
 test('a tool_result that names no turn lands in the turn that is running', () => {
   const { socket, element } = mountBox(fakeMarkdown());
 

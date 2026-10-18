@@ -31,6 +31,7 @@ Two things have to be on the machine that r2d2box does not install:
 |---|---|---|
 | `agent-proxy` on `$PATH` | the only way r2d2box reaches an agent | [agent-proxy](https://github.com/ThinkerYzu/agent-proxy), `pip install 'git+https://github.com/ThinkerYzu/agent-proxy@v0.1.0'` |
 | `claude` on `$PATH` | what agent-proxy drives | Claude Code |
+| or `codex` on `$PATH`, signed in with ChatGPT | the other agent agent-proxy drives, for `AgentConfig(agent="codex")` | the Codex CLI; needs an agent-proxy newer than `v0.1.0`, which has no `--agent` |
 
 **agent-proxy is a separate install**, from its own tag rather than PyPI, and
 r2d2box does not run end to end without it. Everything below describes the API
@@ -87,7 +88,7 @@ The page side is four files and one `mount`:
 ```
 
 `demo/app.py` and `demo/index.html` are a complete host application built this
-way, in under 100 lines. Run it with:
+way, in about 100 lines. Run it with:
 
 ```bash
 python -m uvicorn demo.app:app --port 8790
@@ -311,15 +312,46 @@ Every field is optional, and a default-constructed `AgentConfig` runs a bare
 | `mcp_config` | `--mcp-config`, with the dict serialized to JSON |
 | `extra_args` | appended verbatim |
 | `proxy_bin` | the binary to run; defaults to `agent-proxy` on `$PATH` |
+| `agent` | `--agent`, first: `"claude"` or `"codex"`. `None`, the default, passes no flag and runs claude |
 
-There is no `resume` field. The session owns the claude session id and adds
+There is no `resume` field. The session owns the agent's session id and adds
 `--resume` itself, ahead of `extra_args`. Putting a session flag in
 `extra_args` — `--resume`, `--session-id`, `-r`, `--continue`, `-c`,
 `--fork-session`, or their `=` forms — raises `ValueError` at spawn rather than
 silently running the wrong conversation.
 
 Do not pass `--dangerously-skip-permissions` or the `AskUserQuestion` denial:
-agent-proxy adds both itself.
+agent-proxy adds both itself. Do not pass `--agent` in `extra_args` either; it
+raises `ValueError`, because the session records which agent its id belongs to.
+
+#### Running codex
+
+`AgentConfig(agent="codex")` runs `agent-proxy --agent codex`, which drives
+`codex app-server`. The stream is the same one, so nothing above `AgentConfig`
+changes: the box, the router, the transcripts and idle eviction all work as
+they do for claude. What a host has to know is what codex will not take:
+
+| Field or argument | Under codex |
+|---|---|
+| `append_system_prompt` | the thread's developer instructions |
+| `allowed_tools`, `mcp_config` | **`ValueError` from `build_argv`**: codex has no per-session equivalent of either |
+| `extra_args`: `--model`, `--sandbox`, `-c key=value` | accepted. `-c` is codex's config override here, where under claude it is `--continue` and is refused |
+| `extra_args`: anything else | refused by agent-proxy at startup, which `submit` reports as a `ProxyStartError` |
+
+The session id is a codex thread id, and `session.agent` says which agent the
+id in `session.agent_session_id` belongs to. If `agent_config` returns a
+different agent for a session than the one it was started under, the next
+spawn starts a new conversation rather than hand one agent's id to the other.
+The transcript is kept and stays on screen; the new agent just does not
+remember it.
+
+What the reader sees differs in the details agent-proxy reports differently
+(its API.md, § The codex agent). Tool calls are named by codex's item types —
+`commandExecution`, `fileChange`, `mcpToolCall`, `webSearch` — and the box
+summarizes each by its command, its files, `server.tool` or its query. Codex
+keeps no list of background commands, so the `background` and `monitor`
+counts stay at 0. A turn codex reports as failed carries codex's reason in
+`turn_end.error`, which the box shows.
 
 ### Transcript stores
 
@@ -398,6 +430,7 @@ turn_id = await session.submit("why does it crash?")
 | `await snapshot()` / `await status()` | the `attached` and `status` payloads |
 | `await report_error(text)` | broadcast a session-wide error of your own |
 | `active` | whether this session has any work in flight |
+| `agent_session_id`, `agent` | the id a respawn resumes, and the agent (`"claude"` or `"codex"`) that minted it; both `None` until the first process starts |
 | `turn_active`, `pending_turns`, `submits_in_flight`, `open_turns`, `process_alive`, `subscriber_count` | live state, derived rather than latched |
 | `task_ids`, `tasks`, `has_endless_work` | outstanding background work; `tasks` maps each id to agent-proxy's kind |
 | `await stop_process()` / `await close()` / `await clear()` | evict the agent / end the session / discard the transcript |
@@ -421,7 +454,7 @@ raised, unchanged.
 ### Idle eviction
 
 A session idle past `idle_timeout_s` has its agent-proxy stopped. The session
-itself survives — it keeps the claude session id — so the next `submit` spawns
+itself survives — it keeps the agent's session id — so the next `submit` spawns
 a replacement with `--resume` and continues the conversation. Nobody attached
 sees anything but a `process_exited`.
 
@@ -962,7 +995,7 @@ task" blocks; an app that drained them silently starts showing them.
 ## See also
 
 [README.md](README.md) is the shortest path to a running box, `demo/` is a
-whole host application in 89 lines, and the module docstrings carry the
+whole host application in about 100 lines, and the module docstrings carry the
 reasoning for anything here that reads as arbitrary.
 
 The one document outside this repository that matters is agent-proxy's own

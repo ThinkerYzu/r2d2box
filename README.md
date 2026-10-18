@@ -106,6 +106,7 @@ left work behind.
 | Python ≥ 3.11, `fastapi` ≥ 0.110 | the router you mount | pip, as this package's dependency |
 | `agent-proxy` on `$PATH` | **the only way r2d2box reaches an agent** | [agent-proxy](https://github.com/ThinkerYzu/agent-proxy), `pip install 'git+https://github.com/ThinkerYzu/agent-proxy@v0.1.0'` |
 | `claude` on `$PATH` | what agent-proxy drives | Claude Code |
+| or `codex` on `$PATH` | the other agent agent-proxy drives, for `AgentConfig(agent="codex")` | the Codex CLI, signed in with ChatGPT; needs an agent-proxy newer than `v0.1.0` |
 | `uvicorn[standard]` | a plain `uvicorn` serves no WebSocket | pip, for the demo or your own server |
 
 **About agent-proxy.** r2d2box does not spawn `claude` itself, does not speak
@@ -115,7 +116,7 @@ interactive `claude` over a pty and states turn boundaries explicitly — every
 message carries a turn id, a kind, and the outstanding user/unowned/background
 counts. Its [API.md](https://github.com/ThinkerYzu/agent-proxy/blob/master/API.md)
 is the contract everything here is built on. What runs without either binary is
-the whole test suite: 241 tests pass with neither installed, because every layer
+the whole test suite: 260 tests pass with neither installed, because every layer
 is tested against a stand-in for the one below it.
 
 ## Running the demo
@@ -126,8 +127,8 @@ is tested against a stand-in for the one below it.
 # then open http://localhost:8790/
 ```
 
-A whole host application in under 100 lines, and the fastest way to see two
-tabs sharing one conversation.
+A whole host application in about 100 lines, and the fastest way to see two
+tabs sharing one conversation. `R2D2BOX_DEMO_AGENT=codex` runs it on codex.
 
 `box.host` is the `AgentHost` underneath, for a caller that also wants an agent
 outside a request — a cron job, a CLI:
@@ -143,9 +144,9 @@ await session.submit("why does it crash?")
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
-.venv/bin/pytest                             # 241 tests, ~1s; needs no `claude`
-node tests/js/run.js                         # the front-end's 57, on their own
-R2D2BOX_RUN_LIVE=1 .venv/bin/pytest -m live  # 8 real conversations; needs agent-proxy and claude
+.venv/bin/pytest                             # 260 tests, ~1s; needs no `claude`
+node tests/js/run.js                         # the front-end's 58, on their own
+R2D2BOX_RUN_LIVE=1 .venv/bin/pytest -m live  # 10 real conversations; needs agent-proxy and claude, and codex for 2
 ```
 
 Nothing in the default suite needs `claude`, and each layer is tested without

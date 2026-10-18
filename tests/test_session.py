@@ -889,7 +889,7 @@ async def test_the_first_spawn_asks_for_no_resume(fake_session):
     session, spawner = fake_session()
     await session.submit("hello")
     assert spawner.resumes == [None]
-    assert session.claude_session_id == "fake-session-0001"
+    assert session.agent_session_id == "fake-session-0001"
 
 
 async def test_the_next_turn_after_an_eviction_resumes_the_conversation(fake_session):
@@ -973,7 +973,7 @@ async def test_a_transient_resume_failure_is_retried_against_the_same_id(fake_se
     await session.submit("second")
 
     assert spawner.resumes == [None, "fake-session-0001", "fake-session-0001"]
-    assert session.claude_session_id == "fake-session-0002"
+    assert session.agent_session_id == "fake-session-0002"
 
 
 async def test_a_resume_that_keeps_failing_gives_up_and_starts_fresh(fake_session):
@@ -989,7 +989,7 @@ async def test_a_resume_that_keeps_failing_gives_up_and_starts_fresh(fake_sessio
     await session.submit("second")
 
     assert spawner.resumes == [None, "old-session", "old-session", None]
-    assert session.claude_session_id == "new-session"
+    assert session.agent_session_id == "new-session"
 
 
 async def test_a_spawn_that_never_works_raises_to_the_caller(fake_session):

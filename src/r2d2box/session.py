@@ -69,7 +69,7 @@ class Subscriber(Protocol):
         """Deliver one server→client message. Raising detaches the subscriber."""
 
 
-# Given a claude session id to resume (or None for a fresh conversation),
+# Given the agent's session id to resume (or None for a fresh conversation),
 # start an agent-proxy for this session. The host supplies it, so `session.py`
 # never sees an `AgentConfig` and never calls the host's config callback itself.
 SpawnProxy = Callable[[str | None], Awaitable[AgentProxy]]
@@ -120,9 +120,11 @@ class Session:
     Created by `AgentHost`, which owns the registry; a caller that has one uses
     `submit`, `attach`, `detach` and `snapshot`. The process starts on the
     first `submit` and can be stopped and restarted underneath a live session
-    any number of times — an idle eviction, a crash — with the claude session
-    id carrying the conversation across. Everything up to the last completed
-    turn lives in the store rather than here.
+    any number of times — an idle eviction, a crash — with the agent's session
+    id carrying the conversation across. `agent` records which inner agent that
+    id belongs to, since a claude id does not resume under codex or the
+    reverse. Everything up to the last completed turn lives in the store
+    rather than here.
 
     One event loop only. An internal lock orders `attach` against the read
     pump, which is what makes the late-joiner guarantee hold.
@@ -137,11 +139,13 @@ class Session:
         store: TranscriptStore,
         build_prompt: BuildPrompt | None = None,
         on_activity: ActivityCallback | None = None,
-        claude_session_id: str | None = None,
+        agent_session_id: str | None = None,
+        agent: str | None = None,
     ) -> None:
         self.topic = topic
         self.name = name
-        self.claude_session_id = claude_session_id
+        self.agent_session_id = agent_session_id
+        self.agent = agent
         self.last_active = time.monotonic()
 
         self._spawn = spawn
@@ -579,13 +583,13 @@ class Session:
         starts a second conversation on top of the first with no sign that
         anything went wrong. If the retry fails too the session starts fresh —
         a lost history beats a session that can never talk again — and
-        `claude_session_id` becomes the new process's own.
+        `agent_session_id` becomes the new process's own.
         """
         if self._proxy is not None and self._proxy.alive:
             return self._proxy
         await self._stop_process()
 
-        resume = self.claude_session_id
+        resume = self.agent_session_id
         attempts: list[str | None] = [resume, resume, None] if resume else [None]
         last_error: BaseException | None = None
         for attempt, resume_id in enumerate(attempts, start=1):
@@ -604,7 +608,8 @@ class Session:
                     self.topic, self.name, resume,
                 )
             self._proxy = proxy
-            self.claude_session_id = proxy.session_id
+            self.agent_session_id = proxy.session_id
+            self.agent = proxy.agent
             # The new process numbers its turns from `t-1` again, so its ids
             # mean nothing the old mapping can answer.
             self._proxy_turn_ids.clear()
@@ -969,7 +974,7 @@ class Session:
         stops an evicted session from being exempt from every later eviction.
 
         The session itself survives: the next `submit` spawns a replacement and
-        resumes `claude_session_id`.
+        resumes `agent_session_id`.
         """
         if self._proxy is not proxy:
             return
@@ -1123,7 +1128,7 @@ class Session:
     async def stop_process(self) -> None:
         """Terminate the agent but keep the conversation, so the next submit resumes it.
 
-        This is what an idle eviction does. The transcript, the claude session
+        This is what an idle eviction does. The transcript, the agent session
         id and the attached clients all survive; a turn in flight does not, and
         is stored with an error outcome on the read pump's way out.
         """

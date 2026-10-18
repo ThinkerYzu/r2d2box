@@ -18,7 +18,7 @@ import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
-from .config import AgentConfig, build_argv
+from .config import DEFAULT_AGENT, AgentConfig, build_argv
 
 _log = logging.getLogger(__name__)
 
@@ -44,8 +44,10 @@ class AgentProxy:
 
     Construct with `await AgentProxy.start(config)`; the constructor itself is
     for tests that supply their own process. The instance is live from that
-    moment until `close()`, and `session_id` is the claude session id a later
-    process passes back as `build_argv`'s `resume`.
+    moment until `close()`, and `session_id` is the agent's session id a later
+    process passes back as `build_argv`'s `resume`. `agent` names the inner
+    agent that id belongs to: a claude session id does not resume under codex,
+    or the reverse.
 
     One consumer only: `messages()` reads the single stdout pipe, so a second
     concurrent iteration raises. Writes are serialized by an internal lock, so
@@ -57,11 +59,13 @@ class AgentProxy:
         process: asyncio.subprocess.Process,
         session_id: str,
         *,
+        agent: str = DEFAULT_AGENT,
         stderr_task: asyncio.Task[None] | None = None,
         tag: str = "",
     ) -> None:
         self._process = process
         self._session_id = session_id
+        self._agent = agent
         self._stderr_task = stderr_task
         self._tag = tag
         self._write_lock = asyncio.Lock()
@@ -81,7 +85,7 @@ class AgentProxy:
         """Spawn one agent-proxy for `config` and read its `ready`, or raise `ProxyStartError`.
 
         Returns only once the session id is known, so no layer above needs a
-        first-message special case. `resume` is a claude session id from an
+        first-message special case. `resume` is the agent's session id from an
         earlier process; `tag` is a caller-chosen label for log lines, normally
         `"topic/session"`.
 
@@ -112,15 +116,18 @@ class AgentProxy:
             stderr_task = asyncio.create_task(_drain_stderr(process.stderr, tag))
 
         try:
-            session_id = await cls._read_ready(process)
+            session_id, agent = await cls._read_ready(process)
         except BaseException:
             await _shut_down(process, stderr_task)
             raise
-        return cls(process, session_id, stderr_task=stderr_task, tag=tag)
+        return cls(process, session_id, agent=agent, stderr_task=stderr_task, tag=tag)
 
     @staticmethod
-    async def _read_ready(process: asyncio.subprocess.Process) -> str:
-        """Consume agent-proxy's mandatory first line and return its session id.
+    async def _read_ready(process: asyncio.subprocess.Process) -> tuple[str, str]:
+        """Consume agent-proxy's mandatory first line; return its session id and agent.
+
+        An agent-proxy that predates `--agent` sends no `agent` field, and every
+        session it ran was claude's.
 
         `ready` is always `seq` 1 and its `session_id` is never null (agent-proxy
         API.md § Sessions). The one documented exception is `--session-id`
@@ -147,12 +154,18 @@ class AgentProxy:
         session_id = message.get("session_id")
         if not isinstance(session_id, str) or not session_id:
             raise ProxyStartError(f"agent-proxy's ready carried no session id: {message!r}")
-        return session_id
+        agent = message.get("agent")
+        return session_id, agent if isinstance(agent, str) and agent else DEFAULT_AGENT
 
     @property
     def session_id(self) -> str:
-        """The claude session id, for resuming this conversation in a later process."""
+        """The agent's session id, for resuming this conversation in a later process."""
         return self._session_id
+
+    @property
+    def agent(self) -> str:
+        """The inner agent this process runs, as its `ready` named it."""
+        return self._agent
 
     @property
     def alive(self) -> bool:

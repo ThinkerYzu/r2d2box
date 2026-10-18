@@ -15,6 +15,10 @@ from typing import Any
 
 DEFAULT_PROXY_BIN = "agent-proxy"
 
+# The inner agent agent-proxy runs when no `--agent` is given.
+DEFAULT_AGENT = "claude"
+CODEX_AGENT = "codex"
+
 # Flags by which the caller would pick the conversation. The session layer owns
 # that choice, so `build_argv` refuses them in `extra_args` rather than letting
 # one silently win — see `_reject_session_flags`.
@@ -22,6 +26,15 @@ _SESSION_FLAGS = frozenset(
     {"--session-id", "--resume", "-r", "--continue", "-c", "--fork-session"}
 )
 _SESSION_FLAG_PREFIXES = ("--session-id=", "--resume=")
+
+# Under codex, `-c` is codex's `-c key=value` config override rather than
+# claude's short `--continue`, so it is a host's to pass.
+_CODEX_SESSION_FLAGS = _SESSION_FLAGS - {"-c"}
+
+# The flag that picks the inner agent. `AgentConfig.agent` owns it, for the same
+# reason the session owns `--resume`: two places choosing would let the wrong
+# one win, and the session records the agent next to its id.
+_AGENT_FLAG = "--agent"
 
 
 @dataclass(frozen=True)
@@ -32,8 +45,14 @@ class AgentConfig:
     the subprocess itself. A default-constructed `AgentConfig` is valid and runs
     a bare `agent-proxy`.
 
-    There is deliberately no `resume` field. The claude session id belongs to the
-    session, which adds `--resume` itself; a host that writes one into
+    `agent` picks agent-proxy's inner agent, `"claude"` or `"codex"`; `None`
+    passes no `--agent` at all, which is claude and works with an agent-proxy
+    that predates the flag. Codex takes no tool allowlist and no MCP config, so
+    a codex config with either is refused by `build_argv` rather than by
+    agent-proxy after the process has started.
+
+    There is deliberately no `resume` field. The agent's session id belongs to
+    the session, which adds `--resume` itself; a host that writes one into
     `extra_args` gets a `ValueError` from `build_argv` instead of a conversation
     that is quietly the wrong one.
     """
@@ -44,23 +63,37 @@ class AgentConfig:
     mcp_config: dict[str, Any] | None = None
     extra_args: Sequence[str] = ()
     proxy_bin: str | None = None
+    agent: str | None = None
+
+
+def agent_of(config: AgentConfig) -> str:
+    """The inner agent `config` runs, naming the default rather than leaving it `None`."""
+    return config.agent or DEFAULT_AGENT
 
 
 def build_argv(config: AgentConfig, resume: str | None = None) -> list[str]:
     """The command line that runs one agent-proxy for `config`, resuming `resume` if given.
 
-    `resume` is the claude session id from a previous process's `ready`, and
+    `resume` is the agent's session id from a previous process's `ready`, and
     comes from the session rather than from `config`. Raises `ValueError` if
-    `config.extra_args` carries a session-control flag.
+    `config.extra_args` carries a session-control flag or `--agent`, or if a
+    codex config asks for something codex has no equivalent of.
 
     Nothing here duplicates what agent-proxy adds for itself:
     `--dangerously-skip-permissions` and the `AskUserQuestion` denial are its
     job (its API.md § Invocation), and passing them again would be a second
     place to keep in step with it.
     """
-    _reject_session_flags(config.extra_args)
+    codex = config.agent == CODEX_AGENT
+    if codex:
+        _reject_claude_only(config)
+    _reject_session_flags(
+        config.extra_args, _CODEX_SESSION_FLAGS if codex else _SESSION_FLAGS
+    )
 
     argv = [config.proxy_bin or DEFAULT_PROXY_BIN]
+    if config.agent:
+        argv += [_AGENT_FLAG, config.agent]
     if config.append_system_prompt:
         argv += ["--append-system-prompt", config.append_system_prompt]
     if config.allowed_tools:
@@ -82,18 +115,38 @@ def build_argv(config: AgentConfig, resume: str | None = None) -> list[str]:
     return argv
 
 
-def _reject_session_flags(extra_args: Sequence[str]) -> None:
-    """Raise `ValueError` if `extra_args` tries to pick the conversation.
+def _reject_claude_only(config: AgentConfig) -> None:
+    """Raise `ValueError` for a codex config that sets a field only claude has.
+
+    agent-proxy refuses `--allowedTools` and `--mcp-config` under codex too,
+    but only after the process has started, as an exit status the session can
+    only report as a spawn that failed. Refusing here names the field.
+    """
+    for name in ("allowed_tools", "mcp_config"):
+        if getattr(config, name):
+            raise ValueError(
+                f"AgentConfig.{name} has no codex equivalent; leave it empty "
+                "for an agent='codex' config"
+            )
+
+
+def _reject_session_flags(extra_args: Sequence[str], session_flags: frozenset[str]) -> None:
+    """Raise `ValueError` if `extra_args` tries to pick the conversation or the agent.
 
     agent-proxy resolves session flags left to right and lets the last one win,
     so a `--resume` in `extra_args` would override the session's own — and
     r2d2box would go on recording turns against an id the agent is not running.
     The failure is invisible at spawn and shows up later as a conversation that
-    lost its history, which is worth refusing outright.
+    lost its history, which is worth refusing outright. `--agent` is refused for
+    the same reason: the session records which agent its id belongs to.
     """
     for arg in extra_args:
-        if arg in _SESSION_FLAGS or arg.startswith(_SESSION_FLAG_PREFIXES):
+        if arg == _AGENT_FLAG or arg.startswith(_AGENT_FLAG + "="):
+            raise ValueError(
+                "AgentConfig.extra_args must not carry --agent; set AgentConfig.agent"
+            )
+        if arg in session_flags or arg.startswith(_SESSION_FLAG_PREFIXES):
             raise ValueError(
                 f"AgentConfig.extra_args must not carry the session flag {arg!r}; "
-                "r2d2box owns the claude session id and passes --resume itself"
+                "r2d2box owns the agent's session id and passes --resume itself"
             )

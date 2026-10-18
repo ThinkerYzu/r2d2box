@@ -158,12 +158,29 @@
   function summarizeInput(input) {
     if (input == null) return '';
     if (typeof input === 'string') return input;
-    var interesting = input.command || input.pattern || input.file_path || input.prompt;
+    var interesting = input.command || input.pattern || input.file_path || input.prompt
+      || input.query || input.path || changedPaths(input.changes) || toolCalled(input);
     var text = typeof interesting === 'string' ? interesting : null;
     if (text == null) {
       try { text = JSON.stringify(input); } catch (e) { text = String(input); }
     }
     return truncate(text, 120);
+  }
+
+  /** The files a codex `fileChange` touches, comma-separated, or null. */
+  function changedPaths(changes) {
+    if (!Array.isArray(changes)) return null;
+    var paths = [];
+    for (var i = 0; i < changes.length; i++) {
+      if (changes[i] && typeof changes[i].path === 'string') paths.push(changes[i].path);
+    }
+    return paths.length ? paths.join(', ') : null;
+  }
+
+  /** `server.tool` for a codex `mcpToolCall`, `tool` for one with no server, or null. */
+  function toolCalled(input) {
+    if (typeof input.tool !== 'string') return null;
+    return typeof input.server === 'string' ? input.server + '.' + input.tool : input.tool;
   }
 
   /** The header label for a task's kind — the generic name for one this box predates. */

@@ -51,7 +51,9 @@ def main(argv: list[str]) -> int:
     _record_argv(argv)
     directives = _load(script_path)
     state = _State()
-    _emit(state, {"type": "ready", "session_id": READY_SESSION_ID})
+    # Named as agent-proxy names it: the `--agent` it was run with, else claude.
+    agent = _option(argv, "--agent") or "claude"
+    _emit(state, {"type": "ready", "session_id": READY_SESSION_ID, "agent": agent})
     for directive in directives:
         if not _run(state, directive):
             break

@@ -24,13 +24,13 @@ import asyncio
 from collections.abc import AsyncIterator
 from typing import Any
 
-from r2d2box import AgentConfig, AgentHost
+from r2d2box import AgentConfig, AgentHost, agent_of
 
 
 class FakeProxy:
     """A message stream a test writes by hand, with `AgentProxy`'s surface.
 
-    `session_id`, `alive`, `returncode`, `submit`, `cancel`, `request_status`,
+    `session_id`, `agent`, `alive`, `returncode`, `submit`, `cancel`, `request_status`,
     `messages()` and `close()` all behave as the real thing's do — a session
     cannot tell the two apart. What is extra is `emit`, `end_stream`, the
     `submits` list recording everything written to it, and the `acked` list of
@@ -50,10 +50,12 @@ class FakeProxy:
         self,
         session_id: str = "fake-session-0001",
         *,
+        agent: str = "claude",
         auto_ack: bool = True,
         outstanding: dict[str, int] | None = None,
     ) -> None:
         self.session_id = session_id
+        self.agent = agent
         self.submits: list[dict[str, Any]] = []
         self.closed = False
         self.auto_ack = auto_ack
@@ -260,7 +262,7 @@ async def wait_until(predicate, *, timeout_s: float = 5.0, what: str = "conditio
 class FakeSpawner:
     """Stands in for a session's spawn callback, recording what each spawn was asked for.
 
-    `resumes` is the claude session id passed to every call in order, which is
+    `resumes` is the agent session id passed to every call in order, which is
     how the resume-and-retry path is asserted; `proxies` is what each call
     returned. `errors` is consumed one entry per call — an exception raises
     from that spawn, `None` lets it succeed — so a test can make the first
@@ -326,7 +328,8 @@ class FakeHost(AgentHost):
         topic, name = tag.split("/", 1)
         self.spawns.append((topic, name, resume))
         self._minted += 1
-        proxy = FakeProxy(resume or f"claude-{self._minted}", auto_ack=self.auto_ack)
+        agent = agent_of(config)
+        proxy = FakeProxy(resume or f"{agent}-{self._minted}", agent=agent, auto_ack=self.auto_ack)
         self.proxies[(topic, name)] = proxy
         return proxy
 

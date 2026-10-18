@@ -14,7 +14,7 @@ else here is for a caller reaching below the router on purpose.
 
 from importlib.metadata import PackageNotFoundError, version as _installed_version
 
-from .config import DEFAULT_PROXY_BIN, AgentConfig, build_argv
+from .config import DEFAULT_PROXY_BIN, AgentConfig, agent_of, build_argv
 from .host import AgentHost
 from .proxy import STREAM_LIMIT, AgentProxy, ProxyStartError
 from .router import DEFAULT_CLIENT_QUEUE_LIMIT, R2D2Box
@@ -54,6 +54,7 @@ __all__ = [
     "Subscriber",
     "TranscriptStore",
     "Turn",
+    "agent_of",
     "build_argv",
     "preview_of",
 ]

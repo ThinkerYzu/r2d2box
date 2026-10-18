@@ -21,6 +21,26 @@ async def test_start_reads_ready_and_keeps_the_session_id(start_scripted):
     assert proxy.alive
 
 
+async def test_start_reads_which_agent_the_session_belongs_to(start_scripted):
+    """`ready.agent` is kept beside the id, since a claude id does not resume under codex."""
+    assert (await start_scripted("silent.jsonl")).agent == "claude"
+    assert (await start_scripted("silent.jsonl", agent="codex")).agent == "codex"
+
+
+async def test_a_ready_with_no_agent_is_claudes(tmp_path):
+    """An agent-proxy that predates `--agent` names no agent, and only ran claude."""
+    script = tmp_path / "old-proxy.sh"
+    script.write_text(
+        '#!/bin/sh\necho \'{"seq":1,"type":"ready","session_id":"old-1"}\'\n'
+    )
+    script.chmod(0o755)
+    proxy = await AgentProxy.start(AgentConfig(proxy_bin=str(script)))
+    try:
+        assert (proxy.session_id, proxy.agent) == ("old-1", "claude")
+    finally:
+        await proxy.close()
+
+
 async def test_ready_is_not_yielded_to_the_caller(start_scripted):
     """`ready` is consumed at start, so no layer above needs a first-message case."""
     proxy = await start_scripted("junk-line.jsonl")

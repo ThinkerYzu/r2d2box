@@ -292,7 +292,7 @@ async def test_an_idle_session_loses_its_process_and_keeps_everything_else(host)
     assert await host.evict_idle() == 1
 
     assert session.process_alive is False
-    assert session.claude_session_id == "claude-1"
+    assert session.agent_session_id == "claude-1"
     assert await host.session("bug-1", "s1") is session
     assert [turn["user"] for turn in (await session.snapshot())["turns"]] == ["a question"]
 
@@ -459,6 +459,52 @@ async def test_an_evicted_sessions_next_turn_works(host):
     assert [turn["user"] for turn in (await session.snapshot())["turns"]] == [
         "a question", "a follow-up",
     ]
+
+
+async def test_an_evicted_codex_session_resumes_its_thread():
+    """The agent is resolved from the config at each spawn, and the id goes with it."""
+    host = FakeHost(lambda topic, name: AgentConfig(agent="codex"))
+    host.idle_timeout_s = 60
+    try:
+        await run_one_turn(host, "bug-1", "s1", "a question")
+        session = await host.session("bug-1", "s1")
+        assert (session.agent, session.agent_session_id) == ("codex", "codex-1")
+        session.last_active -= 120
+        await host.evict_idle()
+
+        await run_one_turn(host, "bug-1", "s1", "a follow-up")
+        assert host.spawns == [("bug-1", "s1", None), ("bug-1", "s1", "codex-1")]
+    finally:
+        await host.close()
+
+
+async def test_a_session_whose_agent_changed_starts_over_rather_than_resume():
+    """A claude session id means nothing to codex, so it is not handed to it.
+
+    The conversation is kept — its transcript and its turns — and the new
+    agent starts a thread of its own, exactly as if the resume had failed.
+    """
+    agent = {"name": "claude"}
+    host = FakeHost(
+        lambda topic, name: AgentConfig(agent=agent["name"])
+    )
+    host.idle_timeout_s = 60
+    try:
+        await run_one_turn(host, "bug-1", "s1", "a question")
+        session = await host.session("bug-1", "s1")
+        session.last_active -= 120
+        await host.evict_idle()
+
+        agent["name"] = "codex"
+        await run_one_turn(host, "bug-1", "s1", "a follow-up")
+
+        assert host.spawns == [("bug-1", "s1", None), ("bug-1", "s1", None)]
+        assert (session.agent, session.agent_session_id) == ("codex", "codex-2")
+        assert [turn["user"] for turn in (await session.snapshot())["turns"]] == [
+            "a question", "a follow-up",
+        ]
+    finally:
+        await host.close()
 
 
 async def test_the_sweeper_evicts_on_its_own(host):

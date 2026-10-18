@@ -104,7 +104,7 @@ async def test_a_real_conversation_survives_losing_its_process(live_host):
     await session.attach(subscriber)
 
     await run_turn(session, "Remember the word PELICAN. Reply with exactly: OK")
-    first_id = session.claude_session_id
+    first_id = session.agent_session_id
     assert first_id
 
     # An eviction, not a crash: the process goes and the conversation stays.
@@ -113,7 +113,7 @@ async def test_a_real_conversation_survives_losing_its_process(live_host):
 
     await run_turn(session, "What word did I ask you to remember? Reply with just the word.")
 
-    assert session.claude_session_id == first_id, "the second process resumed a different session"
+    assert session.agent_session_id == first_id, "the second process resumed a different session"
     snapshot = await session.snapshot()
     assert len(snapshot["turns"]) == 2
     assert snapshot["turns"][0]["outcome"] == "success"
