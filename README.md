@@ -21,7 +21,7 @@ an existing app involves.
 
 > **You need `agent-proxy`.** It is the only way r2d2box reaches an agent, and
 > it is a separate tool — published since 2026-08-17, installed from its tag:
-> `pip install 'git+https://github.com/ThinkerYzu/agent-proxy@v0.1.0'`. See
+> `pip install 'git+https://github.com/ThinkerYzu/agent-proxy@v0.2.0'`. See
 > [Requirements](#requirements).
 
 ```python
@@ -105,10 +105,15 @@ left work behind.
 | Needs | Why | Where from |
 |---|---|---|
 | Python ≥ 3.11, `fastapi` ≥ 0.110 | the router you mount | pip, as this package's dependency |
-| `agent-proxy` on `$PATH` | **the only way r2d2box reaches an agent** | [agent-proxy](https://github.com/ThinkerYzu/agent-proxy), `pip install 'git+https://github.com/ThinkerYzu/agent-proxy@v0.1.0'` |
-| `claude` on `$PATH` | what agent-proxy drives | Claude Code |
-| or `codex` on `$PATH` | the other agent agent-proxy drives, for `AgentConfig(agent="codex")` | the Codex CLI, signed in with ChatGPT; needs an agent-proxy newer than `v0.1.0` |
+| `agent-proxy` on `$PATH` | **the only way r2d2box reaches an agent** | [agent-proxy](https://github.com/ThinkerYzu/agent-proxy), `pip install 'git+https://github.com/ThinkerYzu/agent-proxy@v0.2.0'` |
+| `claude` on `$PATH` | what agent-proxy drives | Claude Code 2.1.221 or newer |
+| or `codex` on `$PATH` | the other agent agent-proxy drives, for `AgentConfig(agent="codex")` | the Codex CLI, signed in with ChatGPT; requires agent-proxy `v0.2.0` or newer |
 | `uvicorn[standard]` | a plain `uvicorn` serves no WebSocket | pip, for the demo or your own server |
+
+Agent-proxy `v0.2.0` supplies the Codex backend and turn cancellation. For
+Claude, it defaults to `--autocompact 1m` to prevent the optional context-window
+dialog from blocking queued prompts; Claude Code 2.1.221 or newer is required.
+An explicit `--autocompact` in `AgentConfig.extra_args` overrides that default.
 
 **About agent-proxy.** r2d2box does not spawn `claude` or `codex` itself, does
 not speak either one's wire format, and adds nothing to the turn protocol. It
@@ -180,11 +185,11 @@ A release is a tag. Pushing one named `vX.Y.Z` runs
 the tag unless it matches `version` in `pyproject.toml`, runs both suites,
 builds the sdist and wheel, checks the front-end files are really inside the
 wheel, and creates the GitHub Release with both artifacts attached and notes
-generated from the commits since the last tag.
+read from [RELEASE-NOTES.md](RELEASE-NOTES.md).
 
 ```bash
 # bump `version` in pyproject.toml, commit and push it, then:
-git tag v0.1.0 && git push origin v0.1.0
+git tag v0.2.0 && git push origin v0.2.0
 ```
 
 `r2d2box.__version__` comes from the installed metadata, so `pyproject.toml` is
@@ -201,8 +206,8 @@ a `claude` or `codex` binary it cannot declare as a dependency. Install a
 release from its artifact or straight from the tag:
 
 ```bash
-pip install https://github.com/ThinkerYzu/r2d2box/releases/download/v0.1.0/r2d2box-0.1.0-py3-none-any.whl
-pip install 'git+https://github.com/ThinkerYzu/r2d2box@v0.1.0'
+pip install https://github.com/ThinkerYzu/r2d2box/releases/download/v0.2.0/r2d2box-0.2.0-py3-none-any.whl
+pip install 'git+https://github.com/ThinkerYzu/r2d2box@v0.2.0'
 ```
 
 ## Documentation

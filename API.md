@@ -20,8 +20,8 @@ implementation got them wrong.
 Not from PyPI — from a release, from a tag, or from a checkout:
 
 ```bash
-pip install https://github.com/ThinkerYzu/r2d2box/releases/download/v0.1.0/r2d2box-0.1.0-py3-none-any.whl
-pip install 'git+https://github.com/ThinkerYzu/r2d2box@v0.1.0'
+pip install https://github.com/ThinkerYzu/r2d2box/releases/download/v0.2.0/r2d2box-0.2.0-py3-none-any.whl
+pip install 'git+https://github.com/ThinkerYzu/r2d2box@v0.2.0'
 pip install -e /path/to/r2d2box
 ```
 
@@ -29,9 +29,14 @@ Two things have to be on the machine that r2d2box does not install:
 
 | Needs | Why | Where from |
 |---|---|---|
-| `agent-proxy` on `$PATH` | the only way r2d2box reaches an agent | [agent-proxy](https://github.com/ThinkerYzu/agent-proxy), `pip install 'git+https://github.com/ThinkerYzu/agent-proxy@v0.1.0'` |
-| `claude` on `$PATH` | what agent-proxy drives | Claude Code |
-| or `codex` on `$PATH`, signed in with ChatGPT | the other agent agent-proxy drives, for `AgentConfig(agent="codex")` | the Codex CLI; needs an agent-proxy newer than `v0.1.0`, which has no `--agent` |
+| `agent-proxy` on `$PATH` | the only way r2d2box reaches an agent | [agent-proxy](https://github.com/ThinkerYzu/agent-proxy), `pip install 'git+https://github.com/ThinkerYzu/agent-proxy@v0.2.0'` |
+| `claude` on `$PATH` | what agent-proxy drives | Claude Code 2.1.221 or newer |
+| or `codex` on `$PATH`, signed in with ChatGPT | the other agent agent-proxy drives, for `AgentConfig(agent="codex")` | the Codex CLI; requires agent-proxy `v0.2.0` or newer |
+
+Agent-proxy `v0.2.0` supplies the Codex backend and turn cancellation. For
+Claude, it defaults to `--autocompact 1m` to prevent the optional context-window
+dialog from blocking queued prompts; Claude Code 2.1.221 or newer is required.
+An explicit `--autocompact` in `AgentConfig.extra_args` overrides that default.
 
 **agent-proxy is a separate install**, from its own tag rather than PyPI, and
 r2d2box does not run end to end without it. Everything below describes the API
