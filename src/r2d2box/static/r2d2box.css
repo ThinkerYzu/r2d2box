@@ -58,6 +58,9 @@
   box-sizing: border-box;
 }
 
+.r2d2-box a,
+.r2d2-box a:visited { color: var(--r2d2-user-accent); }
+
 /* ---- the message list ---------------------------------------------------- */
 
 .r2d2-messages {

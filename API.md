@@ -560,6 +560,9 @@ keeps drawing.
 
 ### Theming
 
+Links use the same light blue as user role names (`--r2d2-user-accent`,
+default `#4fc1ff`), including visited links.
+
 Every class the box emits is prefixed `r2d2-`, and every color, font and gap is
 a custom property on `.r2d2-box`. Retheme by setting them on your own mount
 element:
