@@ -24,9 +24,11 @@ differently, settled here in one place:
 from __future__ import annotations
 
 import asyncio
+import copy
 import inspect
 import logging
 import time
+import uuid
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -192,6 +194,9 @@ class Session:
         # The kind is kept because eviction treats a monitor differently from a
         # shell command; nothing else in the session reads it.
         self._tasks: dict[str, str] = {}
+        self._input_requests: dict[str, dict[str, Any]] = {}
+        self._proxy_input_ids: dict[str, str] = {}
+        self._pending_answers: dict[str, tuple[str, asyncio.Future[None]]] = {}
         # agent-proxy's five counts, replaced wholesale from every message that
         # carries them. Empty until the first one arrives: the key set is the
         # proxy's to define and this session has not been told it yet.
@@ -209,8 +214,9 @@ class Session:
         """True while this session has any work in flight — the server's busy light.
 
         Work is a submit on its way to agent-proxy, a turn that has started and
-        not ended, or a background task still running: the three things that
-        outlive the request that started them. A task is any of agent-proxy's
+        not ended, a background task still running, or a question awaiting
+        human input or delivery confirmation. These can all outlive the
+        request that started them. A task is any of agent-proxy's
         kinds — a `run_in_background` shell command, a monitor watching for an
         event, or a subagent working on its own — since all three are work
         whoever is watching. A process that is merely alive is not work, and
@@ -226,7 +232,9 @@ class Session:
         same question, and a host that only ever asks at a moment of its own
         choosing needs nothing else.
         """
-        return bool(self._open_turns or self._tasks or self._submits_in_flight)
+        return bool(
+            self._open_turns or self._tasks or self._submits_in_flight or self._input_requests
+        )
 
     @property
     def turn_active(self) -> bool:
@@ -385,6 +393,52 @@ class Session:
         finally:
             self._pending.pop(ref, None)
 
+    @property
+    def input_requests(self) -> list[dict[str, Any]]:
+        """Live question forms, isolated from the session's mutable state."""
+        return copy.deepcopy(list(self._input_requests.values()))
+
+    async def answer(
+        self, request: str, answers: dict[str, Any] | None = None, *, dismiss: bool = False
+    ) -> None:
+        """Answer one live request. Validation belongs to agent-proxy; no turn is created.
+
+        Returns on acceptance, before delivery confirmation. Answers are never
+        recorded or broadcast. Request identities cannot survive a proxy restart.
+        """
+        if not isinstance(request, str) or not request:
+            raise ValueError("answer needs a non-empty request id")
+        if not isinstance(dismiss, bool) or (dismiss and answers is not None):
+            raise ValueError("dismiss must be boolean and cannot include answers")
+        if not dismiss and not isinstance(answers, dict):
+            raise ValueError("answer needs an answers object or dismiss=true")
+        async with self._start_lock:
+            proxy = self._proxy
+            async with self._lock:
+                current = self._input_requests.get(request)
+                if self._closed or proxy is None or not proxy.alive or current is None:
+                    raise ValueError("the question is no longer available")
+                if current.get("state") != "pending" or any(
+                    rid == request for rid, _ in self._pending_answers.values()
+                ):
+                    raise ValueError("the question is already being answered")
+                raw_id = next(raw for raw, own in self._proxy_input_ids.items() if own == request)
+                self._ref_counter += 1
+                ref = f"r2d2-{self._ref_counter}"
+                future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+                self._pending_answers[ref] = (request, future)
+            try:
+                await proxy.answer(raw_id, answers, ref, dismiss=dismiss)
+            except BaseException:
+                self._pending_answers.pop(ref, None)
+                raise
+        try:
+            await asyncio.wait_for(future, ACK_TIMEOUT_S)
+        except asyncio.TimeoutError as exc:
+            raise ConnectionError("agent-proxy did not acknowledge the answer") from exc
+        finally:
+            self._pending_answers.pop(ref, None)
+
     async def cancel(self, turn_id: str) -> None:
         """Take turn `turn_id` back: withdraw it if queued, interrupt it if running.
 
@@ -535,6 +589,7 @@ class Session:
                 "tasks": self._task_list(),
                 "process_alive": self.process_alive,
                 "outstanding": dict(self._outstanding),
+                "input_requests": self.input_requests,
             }
 
     def _snapshot_fields(self, stored: list[Turn]) -> dict[str, Any]:
@@ -557,6 +612,7 @@ class Session:
             "tasks": self._task_list(),
             "process_alive": self.process_alive,
             "outstanding": dict(self._outstanding),
+            "input_requests": self.input_requests,
         }
 
     def _task_list(self) -> list[dict[str, str]]:
@@ -613,6 +669,8 @@ class Session:
             # The new process numbers its turns from `t-1` again, so its ids
             # mean nothing the old mapping can answer.
             self._proxy_turn_ids.clear()
+            self._input_requests.clear()
+            self._proxy_input_ids.clear()
             self._pump = asyncio.create_task(
                 self._read_messages(proxy), name=f"r2d2box-pump-{self.topic}-{self.name}"
             )
@@ -674,6 +732,47 @@ class Session:
 
                 kind = message.get("type")
                 ref = str(message.get("ref"))
+                if kind in {"ack", "error"} and ref in self._pending_answers:
+                    request, future = self._pending_answers[ref]
+                    if kind == "error":
+                        if not future.done():
+                            future.set_exception(ValueError(str(message.get("error", "answer refused"))))
+                    else:
+                        current = self._input_requests.get(request)
+                        if current is not None:
+                            current["state"] = "answering"
+                            await self._broadcast_locked({
+                                "type": "input_answering", "request": request,
+                                **self._envelope(),
+                            })
+                        if not future.done():
+                            future.set_result(None)
+                    return
+                # An answer ack can arrive after its caller timed out. It is
+                # never a submit ack and must never create another turn.
+                if kind == "ack" and isinstance(message.get("request"), str):
+                    request = self._proxy_input_ids.get(message["request"])
+                    if request in self._input_requests:
+                        self._input_requests[request]["state"] = "answering"
+                        await self._broadcast_locked({
+                            "type": "input_answering", "request": request, **self._envelope(),
+                        })
+                    return
+                if kind == "input_request":
+                    payload = copy.deepcopy(message["request"])
+                    raw_id = payload["id"]
+                    own_id = self._proxy_input_ids.setdefault(raw_id, "i-" + uuid.uuid4().hex)
+                    payload["id"] = own_id
+                    message = {**message, "request": payload}
+                    self._input_requests[own_id] = {
+                        **payload, "turn": message.get("turn"), "state": "pending",
+                    }
+                elif kind == "input_resolved":
+                    own_id = self._proxy_input_ids.get(message.get("request"))
+                    if own_id is None:
+                        return
+                    message = {**message, "request": own_id}
+                    self._input_requests.pop(own_id, None)
                 if kind == "ack" and ref in self._pending_cancels:
                     # A cancel's answer, not a submit's: it names the turn
                     # being taken back rather than a new one. Consumed like
@@ -927,6 +1026,8 @@ class Session:
         """
         turn_id = _turn_id(message)
         if turn_id is not None:
+            if message.get("type") in {"input_request", "input_resolved"}:
+                return self._open_turns.get(turn_id)
             return self._open_turn(turn_id, _turn_kind(message))
         if len(self._open_turns) == 1:
             return next(iter(self._open_turns.values()))
@@ -996,6 +1097,7 @@ class Session:
             for turn_id in list(self._open_turns):
                 await self._end_turn_locked(turn_id, "agent-proxy exited")
             self._tasks.clear()
+            self._input_requests.clear()
             self._outstanding = {key: 0 for key in self._outstanding}
             await self._broadcast_locked({
                 "type": "process_exited",
@@ -1039,6 +1141,10 @@ class Session:
             if not future.done():
                 future.set_exception(error)
         self._pending_cancels.clear()
+        for _, future in self._pending_answers.values():
+            if not future.done():
+                future.set_exception(error)
+        self._pending_answers.clear()
 
     async def _broadcast_locked(self, message: dict[str, Any]) -> None:
         """Send one message to every subscriber, dropping the ones that fail.

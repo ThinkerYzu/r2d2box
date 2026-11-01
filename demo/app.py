@@ -41,6 +41,7 @@ def agent_config(topic: str, session: str) -> AgentConfig:
     """
     return AgentConfig(
         agent=AGENT,
+        user_input=os.environ.get("R2D2BOX_DEMO_USER_INPUT") == "1",
         cwd=DEMO_DIR,
         append_system_prompt=(
             f"You are the assistant in a demo chat panel, talking about {topic!r}. "

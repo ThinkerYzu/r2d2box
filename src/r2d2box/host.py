@@ -347,6 +347,9 @@ class AgentHost:
         is not a hypothetical: a prompt the TUI ate left exactly that state in
         the field.
         """
+        # Human waits have their own deadline, enforced by agent-proxy.
+        if session.input_requests:
+            return None
         caps: list[float | None] = []
         if session.pending_turns or session.submits_in_flight:
             caps.append(self.pending_evict_cap_s)

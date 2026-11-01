@@ -523,6 +523,8 @@
     // fold it wherever it was drawn — a monitor's routinely arrives with no
     // `turn` at all, long after the turn that started it has ended.
     this.taskBlocks = {};
+    this.inputForms = {};
+    this.inputReady = false;
     this.processAlive = false;
     this.replayTurn = null;
 
@@ -544,6 +546,8 @@
     this.el.textContent = '';
 
     this.messagesEl = make(this.doc, 'div', 'r2d2-messages');
+    this.questionsEl = make(this.doc, 'div', 'r2d2-questions');
+    this.questionsEl.style.display = 'none';
     this.composerEl = make(this.doc, 'div', 'r2d2-composer');
     this.badgeEl = make(this.doc, 'div', 'r2d2-context-badge');
     this.badgeEl.style.display = 'none';
@@ -564,6 +568,7 @@
     this.composerEl.appendChild(this.stopEl);
     this.composerEl.appendChild(this.sendEl);
     this.el.appendChild(this.messagesEl);
+    this.el.appendChild(this.questionsEl);
     this.el.appendChild(this.composerEl);
 
     this.sendEl.addEventListener('click', function () { self.submit(); });
@@ -608,6 +613,8 @@
     socket.onclose = function () {
       if (self.socket !== socket) return;
       self.socket = null;
+      self.inputReady = false;
+      self.refreshInputForms();
       self.emit('disconnected', { type: 'disconnected' });
       self.scheduleReconnect();
     };
@@ -636,6 +643,8 @@
   /** Ask to be subscribed to this box's topic and session. */
   Box.prototype.sendAttach = function () {
     if (!this.topic) return;
+    this.inputReady = false;
+    this.refreshInputForms();
     var command = { type: 'attach', topic: this.topic };
     if (this.session) command.session = this.session;
     this.send(command);
@@ -673,6 +682,7 @@
       this.reset();
       this.session = message.session || this.session;
       this.renderTranscript(message.turns || []);
+      this.inputReady = true;
       this.applyState(message);
     } else if (type === 'status') {
       // Not a broadcast: the `seq` it carries is the last one the session
@@ -746,6 +756,26 @@
       this.pendingText = null;
       this.openTurns[turnIdOf(message)] = true;
     }
+    if (type === 'input_request') {
+      var requests = Object.keys(this.inputForms).map(function (id) {
+        var form = this.inputForms[id];
+        return Object.assign({}, form.request, { state: form.state });
+      }, this);
+      requests.push(Object.assign({}, message.request, { turn: message.turn, state: 'pending' }));
+      this.syncInputRequests(requests);
+    } else if (type === 'input_answering') {
+      var form = this.inputForms[message.request];
+      if (form) { form.state = 'answering'; this.updateInputForm(form); }
+    } else if (type === 'input_resolved') {
+      var resolved = this.inputForms[message.request];
+      if (resolved) {
+        this.questionsEl.removeChild(resolved.el);
+        delete this.inputForms[message.request];
+        this.questionsEl.style.display = Object.keys(this.inputForms).length ? '' : 'none';
+      }
+    } else if (type === 'process_exited') {
+      this.syncInputRequests([]);
+    }
     this.draw(message);
     this.refreshComposer();
   };
@@ -757,6 +787,11 @@
    * what makes a reattached tab look exactly like one that never left.
    */
   Box.prototype.draw = function (message) {
+    if (message.type === 'input_request') {
+      this.appendNote((message.request.questions || []).map(function (q) { return q.question; }).join(' '));
+      return;
+    }
+    if (message.type === 'input_resolved' || message.type === 'input_answering') return;
     var self = this;
     withScrollAnchor(this.messagesEl, function () {
       var id = turnIdOf(message);
@@ -896,6 +931,7 @@
   /** Empty the screen and everything derived from the old conversation. */
   Box.prototype.reset = function () {
     this.messagesEl.textContent = '';
+    this.syncInputRequests([]);
     this.turns = {};
     this.turnOrder = [];
     this.openTurns = {};
@@ -916,6 +952,7 @@
    */
   Box.prototype.applyState = function (message) {
     this.processAlive = !!message.process_alive;
+    if (message.input_requests) this.syncInputRequests(message.input_requests);
     // `tasks` carries the kinds and `task_ids` does not, so an older server
     // that sends only the ids leaves every task looking like a shell command
     // — which is what every task was when `task_ids` was the whole message.
@@ -983,6 +1020,13 @@
   Box.prototype.showConnectionMessage = function (message) {
     if (message.type !== 'error') return;
     this.appendNote(message.error || 'the command failed');
+    var form = this.inputForms[message.request];
+    if (form) {
+      form.sending = false;
+      form.error.textContent = message.error || 'The answer was not accepted.';
+      this.updateInputForm(form);
+      this.send({ type: 'status_query' });
+    }
     if (this.pendingText != null && !this.inputEl.value) {
       this.inputEl.value = this.pendingText;
       this.pendingText = null;
@@ -997,6 +1041,174 @@
       self.messagesEl.appendChild(make(self.doc, 'div', 'r2d2-note', text));
       self.pinStatus();
     });
+  };
+
+  // ---- structured questions ------------------------------------------------
+
+  /** Build only live forms. Transcript replay never makes an old request actionable. */
+  Box.prototype.syncInputRequests = function (requests) {
+    var live = {};
+    for (var i = 0; i < requests.length; i++) {
+      var request = requests[i];
+      live[request.id] = true;
+      var form = this.inputForms[request.id];
+      if (!form) {
+        form = this.buildInputForm(request);
+        this.inputForms[request.id] = form;
+        this.questionsEl.appendChild(form.el);
+      }
+      form.state = request.state || 'pending';
+      this.updateInputForm(form);
+    }
+    for (var id in this.inputForms) {
+      if (!live[id]) {
+        var stale = this.inputForms[id];
+        this.questionsEl.removeChild(stale.el);
+        delete this.inputForms[id];
+      }
+    }
+    this.questionsEl.style.display = requests.length ? '' : 'none';
+  };
+
+  Box.prototype.updateInputForm = function (form) {
+    var disabled = !this.inputReady || form.sending || form.state !== 'pending';
+    for (var i = 0; i < form.controls.length; i++) form.controls[i].disabled = disabled;
+    form.submit.disabled = disabled;
+    form.dismiss.disabled = disabled;
+    form.status.textContent = !this.inputReady ? 'Waiting for connection'
+      : (form.sending || form.state === 'answering') ? 'Sending answer…' : '';
+  };
+
+  Box.prototype.refreshInputForms = function () {
+    for (var id in this.inputForms) this.updateInputForm(this.inputForms[id]);
+  };
+
+  Box.prototype.buildInputForm = function (request) {
+    var self = this;
+    var form = {
+      el: make(this.doc, 'form', 'r2d2-question-form'), request: request,
+      fields: [], controls: [], state: request.state || 'pending', sending: false,
+    };
+    form.el.appendChild(make(this.doc, 'div', 'r2d2-question-title', 'The agent has a question'));
+    if (request.expires_at) {
+      form.el.appendChild(make(this.doc, 'div', 'r2d2-question-deadline',
+        'Answer by ' + request.expires_at));
+    }
+    (request.questions || []).forEach(function (question) {
+      var field = { question: question, choices: [], text: null, other: null };
+      var group = make(self.doc, 'fieldset', 'r2d2-question');
+      group.appendChild(make(self.doc, 'legend', 'r2d2-question-header', question.header || 'Question'));
+      group.appendChild(make(self.doc, 'p', 'r2d2-question-text', question.question));
+      if (question.multi_select) {
+        group.appendChild(make(self.doc, 'p', 'r2d2-question-hint', 'Choose one or more answers.'));
+      }
+      var options = question.options || [];
+      options.forEach(function (option) {
+        var label = make(self.doc, 'label', 'r2d2-question-option');
+        var input = make(self.doc, 'input', 'r2d2-question-choice');
+        input.type = question.multi_select ? 'checkbox' : 'radio';
+        input.name = request.id + '-' + question.id;
+        input.value = option.id;
+        label.appendChild(input);
+        var copy = make(self.doc, 'span', 'r2d2-question-option-copy');
+        copy.appendChild(make(self.doc, 'span', 'r2d2-question-option-label', option.label));
+        if (option.description) copy.appendChild(
+          make(self.doc, 'span', 'r2d2-question-description', option.description));
+        label.appendChild(copy);
+        group.appendChild(label);
+        field.choices.push(input);
+        form.controls.push(input);
+        input.addEventListener('change', function () {
+          if (input.checked && field.other) field.other.checked = false;
+          if (input.checked && field.text) field.text.value = '';
+        });
+      });
+      if (question.allow_text) {
+        var label = make(self.doc, 'label', 'r2d2-question-option');
+        if (options.length) {
+          field.other = make(self.doc, 'input', 'r2d2-question-other');
+          field.other.type = 'radio';
+          field.other.name = request.id + '-' + question.id;
+          label.appendChild(field.other);
+          form.controls.push(field.other);
+          field.other.addEventListener('change', function () {
+            if (field.other.checked) field.choices.forEach(function (choice) { choice.checked = false; });
+          });
+        }
+        label.appendChild(make(self.doc, 'span', '', options.length ? 'Other answer' : 'Your answer'));
+        field.text = make(self.doc, 'input', 'r2d2-question-free-text');
+        field.text.type = question.secret ? 'password' : 'text';
+        field.text.setAttribute('aria-label', question.question);
+        field.text.setAttribute('autocomplete', 'off');
+        label.appendChild(field.text);
+        group.appendChild(label);
+        form.controls.push(field.text);
+        field.text.addEventListener('input', function () {
+          if (field.other) field.other.checked = true;
+          field.choices.forEach(function (choice) { choice.checked = false; });
+        });
+      }
+      form.el.appendChild(group);
+      form.fields.push(field);
+    });
+    form.error = make(this.doc, 'div', 'r2d2-question-error');
+    form.error.setAttribute('role', 'alert');
+    form.el.appendChild(form.error);
+    var actions = make(this.doc, 'div', 'r2d2-question-actions');
+    form.submit = make(this.doc, 'button', 'r2d2-question-submit', 'Submit answers');
+    form.submit.type = 'submit';
+    form.dismiss = make(this.doc, 'button', 'r2d2-question-dismiss', 'Dismiss');
+    form.dismiss.type = 'button';
+    form.status = make(this.doc, 'span', 'r2d2-question-status');
+    form.status.setAttribute('role', 'status');
+    actions.appendChild(form.submit);
+    actions.appendChild(form.dismiss);
+    actions.appendChild(form.status);
+    form.el.appendChild(actions);
+    form.el.addEventListener('submit', function (event) {
+      event.preventDefault();
+      self.sendInputAnswer(form, false);
+    });
+    form.dismiss.addEventListener('click', function () { self.sendInputAnswer(form, true); });
+    return form;
+  };
+
+  Box.prototype.sendInputAnswer = function (form, dismiss) {
+    if (!this.inputReady || form.sending || form.state !== 'pending') return;
+    var command = { type: 'answer', request: form.request.id };
+    if (dismiss) command.dismiss = true;
+    else {
+      command.answers = Object.create(null);
+      for (var i = 0; i < form.fields.length; i++) {
+        var field = form.fields[i];
+        var question = field.question;
+        var choices = field.choices.filter(function (choice) { return choice.checked; })
+          .map(function (choice) { return choice.value; });
+        if (field.text && (!field.other || field.other.checked)) {
+          if (!field.text.value.trim()) {
+            form.error.textContent = 'Please answer every question.';
+            return;
+          }
+          command.answers[question.id] = { text: field.text.value };
+        } else {
+          if (!choices.length || (!question.multi_select && choices.length !== 1)) {
+            form.error.textContent = 'Please answer every question.';
+            return;
+          }
+          command.answers[question.id] = { choices: choices };
+        }
+      }
+    }
+    if (!this.send(command)) {
+      form.error.textContent = 'Not connected. Your answer was not sent.';
+      return;
+    }
+    form.error.textContent = '';
+    form.sending = true;
+    this.updateInputForm(form);
+    // Status is also a recovery path if this connection loses the acceptance
+    // event. Never retransmit an answer automatically after a disconnect.
+    this.send({ type: 'status_query' });
   };
 
   // ---- the composer ---------------------------------------------------------
@@ -1111,10 +1323,11 @@
     this.stopEl.style.display = showStop ? '' : 'none';
     this.stopEl.disabled = !stoppable;
     if (stopping) this.showStatus('Stopping', false);
+    else if (Object.keys(this.inputForms).length) this.showStatus('Waiting for your answer', true);
     else if (busy) this.showStatus('Working', false);
     else if (waiting) this.showStatus('Waiting for background tasks', true);
     else this.hideStatus();
-    this.pollStatusWhile(blocked);
+    this.pollStatusWhile(blocked || Object.keys(this.inputForms).length > 0);
   };
 
   /** Show the working indicator at the foot of the message list. */
@@ -1165,7 +1378,7 @@
       self.statusTimer = null;
       if (self.destroyed) return;
       self.send({ type: 'status_query' });
-      if (Object.keys(self.openTurns).length || self.hasEndingTask()) {
+      if (Object.keys(self.openTurns).length || self.hasEndingTask() || Object.keys(self.inputForms).length) {
         self.statusTimer = self.setTimeout(tick, STATUS_POLL_MS);
       }
     };

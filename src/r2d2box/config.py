@@ -51,6 +51,9 @@ class AgentConfig:
     a codex config with either is refused by `build_argv` rather than by
     agent-proxy after the process has started.
 
+    `user_input=True` enables the structured question bridge with --user-input.
+    It requires a question-capable agent-proxy; the default is off.
+
     There is deliberately no `resume` field. The agent's session id belongs to
     the session, which adds `--resume` itself; a host that writes one into
     `extra_args` gets a `ValueError` from `build_argv` instead of a conversation
@@ -64,6 +67,7 @@ class AgentConfig:
     extra_args: Sequence[str] = ()
     proxy_bin: str | None = None
     agent: str | None = None
+    user_input: bool = False
 
 
 def agent_of(config: AgentConfig) -> str:
@@ -94,6 +98,8 @@ def build_argv(config: AgentConfig, resume: str | None = None) -> list[str]:
     argv = [config.proxy_bin or DEFAULT_PROXY_BIN]
     if config.agent:
         argv += [_AGENT_FLAG, config.agent]
+    if config.user_input:
+        argv += ["--user-input"]
     if config.append_system_prompt:
         argv += ["--append-system-prompt", config.append_system_prompt]
     if config.allowed_tools:

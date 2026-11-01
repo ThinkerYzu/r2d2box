@@ -123,8 +123,17 @@ boundaries explicitly the same way for both — every message carries a turn id,
 a kind, and the outstanding user/unowned/background counts. Its
 [API.md](https://github.com/ThinkerYzu/agent-proxy/blob/master/API.md) is the
 contract everything here is built on. What runs without any of these binaries
-is the whole test suite: 260 tests pass with none installed, because every
+is the whole test suite: 275 tests pass with none installed, because every
 layer is tested against a stand-in for the one below it.
+
+## Agent questions
+
+Set `AgentConfig(user_input=True)` to let either agent ask structured questions.
+The box shows choice controls, permitted free text, and Submit answers / Dismiss
+controls, synchronized across tabs and reconnects. See
+[Structured questions](API.md#structured-questions) for requirements and protocol.
+This opt-in feature requires the question-capable agent-proxy working checkout;
+Claude questions need Claude Code 2.1.316 or newer.
 
 ## Running the demo
 
@@ -146,14 +155,30 @@ await session.attach(my_subscriber)     # anything with `async def send(message)
 await session.submit("why does it crash?")
 ```
 
+To try questions, install the question-capable agent-proxy checkout and run:
+
+```bash
+R2D2BOX_DEMO_USER_INPUT=1 .venv/bin/python -m uvicorn demo.app:app --host 127.0.0.1 --port 8790
+```
+
+Keep the command running and open [the demo](http://localhost:8790/). For Claude,
+try this prompt:
+
+> Use AskUserQuestion to ask which color I prefer, with Blue, Green and Purple
+> as choices. Wait for my answer, then summarize my choice in one sentence.
+
+Select an answer and click **Submit answers**. Add `R2D2BOX_DEMO_AGENT=codex`
+to the launch command for Codex, and ask it to use `request_user_input` instead.
+Open the same session URL in another tab to watch the form state synchronize.
+
 ## Development
 
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
-.venv/bin/pytest                             # 260 tests, ~1s; needs no `claude`
-node tests/js/run.js                         # the front-end's 58, on their own
-R2D2BOX_RUN_LIVE=1 .venv/bin/pytest -m live  # 10 real conversations; needs agent-proxy and claude, and codex for 2
+.venv/bin/pytest                             # 275 tests, ~1s; needs no `claude`
+node tests/js/run.js                         # the front-end's 69, on their own
+R2D2BOX_RUN_LIVE=1 .venv/bin/pytest -m live  # 12 live tests; needs agent-proxy, claude and codex
 ```
 
 Nothing in the default suite needs `claude`, and each layer is tested without

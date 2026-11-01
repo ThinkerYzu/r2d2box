@@ -9,7 +9,7 @@ the reasoning — most of this library's rules exist because an earlier
 implementation got them wrong.
 
 **Contents:** [Install](#install) · [Quick start](#quick-start) ·
-[Python API](#python-api) · [JavaScript API](#javascript-api) ·
+[Python API](#python-api) · [Structured questions](#structured-questions) · [JavaScript API](#javascript-api) ·
 [WebSocket protocol](#websocket-protocol) · [Session REST](#session-rest) ·
 [Failure behavior](#failure-behavior) · [Migrating an existing app](#migrating-an-existing-app)
 
@@ -263,13 +263,14 @@ application that would rather ask at a moment of its own choosing:
 busy = [s.name for s in box.host.live_sessions("bug-1992198") if s.active]
 ```
 
-A session is **working** when any of three things is true:
+A session is **working** when any of four things is true:
 
 | Working because | From | Until |
 |---|---|---|
 | a submit is in flight | the moment `submit` is called | agent-proxy acknowledges it, or it fails |
 | a turn has started and not ended | its `ack` | its `turn_end` |
 | a background task is running | `task_start` | `task_end` |
+| a question awaits an answer or delivery | `input_request` | `input_resolved` or process exit |
 
 A background task is any of agent-proxy's kinds — a `run_in_background` shell
 command, a monitor, or a subagent — and all three count.
@@ -317,6 +318,7 @@ Every field is optional, and a default-constructed `AgentConfig` runs a bare
 | `mcp_config` | `--mcp-config`, with the dict serialized to JSON |
 | `extra_args` | appended verbatim |
 | `proxy_bin` | the binary to run; defaults to `agent-proxy` on `$PATH` |
+| `user_input` | `--user-input` when true; default false. Requires the question-capable upstream working checkout |
 | `agent` | `--agent`, first: `"claude"` or `"codex"`. `None`, the default, passes no flag and runs claude |
 
 There is no `resume` field. The session owns the agent's session id and adds
@@ -325,9 +327,9 @@ There is no `resume` field. The session owns the agent's session id and adds
 `--fork-session`, or their `=` forms — raises `ValueError` at spawn rather than
 silently running the wrong conversation.
 
-Do not pass `--dangerously-skip-permissions` or the `AskUserQuestion` denial:
-agent-proxy adds both itself. Do not pass `--agent` in `extra_args` either; it
-raises `ValueError`, because the session records which agent its id belongs to.
+Agent-proxy supplies `--dangerously-skip-permissions` and, unless user input
+is enabled, the `AskUserQuestion` denial; callers need not add them. Do not
+pass `--agent` in `extra_args` either; it raises `ValueError`, because the session records which agent its id belongs to.
 
 #### Running codex
 
@@ -357,6 +359,56 @@ summarizes each by its command, its files, `server.tool` or its query. Codex
 keeps no list of background commands, so the `background` and `monitor`
 counts stay at 0. A turn codex reports as failed carries codex's reason in
 `turn_end.error`, which the box shows.
+
+### Structured questions
+
+Enable agent questions with `AgentConfig(user_input=True)` for either backend.
+This requires agent-proxy's **working checkout with `--user-input`**, an
+unreleased extension absent from v0.2.0. Claude questions require Claude Code
+**2.1.316 or newer**. Codex input support is validated upstream on 0.163.0.
+The default remains off, so existing installations keep working.
+
+The shipped box shows active requests above its composer. Each question keeps
+its header, text, option labels and descriptions. Radio buttons allow one
+choice, checkboxes allow several, and text is offered only when permitted.
+Secret text uses a password field. Nothing is preselected. **Submit answers**
+sends the whole batch; **Dismiss** returns no selection. Neither creates a new
+user turn. While a request awaits delivery, controls are disabled in every tab.
+
+Reloading or reconnecting restores live forms from `input_requests` in
+`attached` and `status`. Transcript events never restore actionable historical
+forms. A question may remain live after its turn ends; resolution does not
+reopen that turn. A waiting question counts as `Session.active` and is exempt
+from idle eviction until the proxy resolves it. The proxy enforces the deadline,
+24 hours by default, configurable with `AGENTPROXY_INPUT_TIMEOUT_S` in the host
+process's environment. The request carries its actual `expires_at` timestamp.
+
+For custom clients, send either:
+
+```json
+{"type":"answer","request":"<request.id>","answers":{"q-1":{"choices":["o-2"]}}}
+{"type":"answer","request":"<request.id>","answers":{"q-1":{"text":"Another answer"}}}
+{"type":"answer","request":"<request.id>","dismiss":true}
+```
+
+Use the ids delivered by r2d2box, including every question in one batch. Option
+ids are scoped to their question. Requests are given opaque ids that cannot
+answer a new process's question after a restart. Invalid, duplicate or stale
+answers return a connection-scoped `error` with `request` and no `seq`.
+Agent-proxy validates the batch before any partial answer is delivered.
+
+An `input_answering` broadcast with `request` means acceptance for delivery;
+`input_resolved` with `request` and `reason` means the form has closed. Reasons
+are `answered`, `dismissed`, `expired`, `cancelled`, `backend_closed` and `error`.
+Wait for resolution rather than treating acceptance as completed delivery.
+`input_request.request` contains `id`, `blocking`, `expires_at`, `questions`
+and any backend metadata. Each question has `id`, `header`, `question`,
+`options` (`id`, `label`, `description`), `multi_select`, `allow_text` and `secret`.
+Snapshot entries add the localized `turn` and `state` (`pending` or `answering`).
+
+The library does not add answer contents to transcripts or broadcasts. The
+proxy's own diagnostic logging and ordinary backend tool-result messages retain
+their upstream behavior; secret input masking is a display feature.
 
 ### Transcript stores
 
@@ -430,6 +482,8 @@ turn_id = await session.submit("why does it crash?")
 | Member | Does |
 |---|---|
 | `await submit(text, context=None)` | assemble the prompt, spawn if needed, return the turn id |
+| `input_requests` | complete live question forms, copied on read |
+| `await answer(request, answers=None, *, dismiss=False)` | answer or dismiss a live request; returns on acceptance and raises `ValueError` on rejection |
 | `await cancel(turn_id)` | take that turn back — withdrawn if queued, interrupted if running; returns once agent-proxy has taken the request, and `turn_end` says what came of it |
 | `await attach(subscriber)` / `await detach(subscriber)` | subscribe and unsubscribe |
 | `await snapshot()` / `await status()` | the `attached` and `status` payloads |
@@ -663,6 +717,7 @@ time.
 |---|---|---|
 | `attach` | `topic`, optional `session` | `attached`. With no `session`, one is created and named in the answer |
 | `submit` | `text`, optional `context` | nothing directly — the turn arrives as broadcasts |
+| `answer` | `request` and `answers`, or `dismiss: true` | `input_answering`, then `input_resolved`; see [Structured questions](#structured-questions) |
 | `cancel` | `turn` | nothing directly — `turn_cancel` is broadcast once the request is taken, and the turn's `turn_end` says what came of it |
 | `status_query` | — | `status` |
 | `detach` | — | `detached` |
@@ -696,15 +751,17 @@ client also carry `seq`; messages aimed at one connection carry
 | `turn_cancel` | r2d2box | a `cancel` for this turn was taken; the turn is stopping, and its `turn_end` is still to come |
 | `text`, `thinking`, `tool_use`, `tool_result` | agent-proxy | turn content |
 | `turn_start`, `turn_end` | agent-proxy | turn boundaries, with `turn.kind` |
+| `input_request`, `input_resolved` | agent-proxy | question lifecycle; request ids are localized by r2d2box |
+| `input_answering` | r2d2box | answer accepted for delivery; carries `request`, without answer contents |
 | `task_start`, `task_end` | agent-proxy | background task lifecycle, with `task.kind` |
 | `error` | either | a session failure, or — with `scope: "connection"` — this client's command refused |
 | `process_exited` | r2d2box | the agent-proxy behind this session is gone |
 | `session_closed` | r2d2box | this conversation is over; the last message a session sends |
 
-Forwarded messages are agent-proxy's own, unchanged, with an envelope added —
-see agent-proxy's own `API.md § Message types` for their fields. Three of its
+Forwarded messages preserve agent-proxy's vocabulary, with an envelope added —
+see agent-proxy's own `API.md § Message types` for their fields. Some
 fields cannot survive as they are. `ref` is r2d2box's internal correlation
-token and is dropped. The other two are numbered per process, and a session
+token and is dropped. The sequence and turn id are numbered per process, and a session
 outlives its process, so both are renumbered for the conversation and the
 proxy's own value is kept beside the new one:
 
@@ -736,18 +793,20 @@ An `attached` message looks like this:
  "turns": [{"id": "t-3", "kind": "user", "user": "why does it crash?",
             "events": [{"type": "turn_start", "…": "…"}],
             "started_at": 1755300000.0, "ended_at": 1755300012.0, "outcome": "ok"}],
- "turn_active": true, "process_alive": true,
+ "turn_active": true, "process_alive": true, "input_requests": [],
  "task_ids": ["bash_3", "mon_1"],
  "tasks": [{"id": "bash_3", "kind": "shell"}, {"id": "mon_1", "kind": "monitor"}],
  "outstanding": {"user": 1, "unowned": 0, "background": 1, "monitor": 1, "agent": 0}}
 ```
 
 `tasks` and `task_ids` hold the same tasks; `tasks` adds agent-proxy's kind for
-each. `outstanding` is agent-proxy's own count vector, forwarded as it arrives —
-**do not hard-code its keys.** They are agent-proxy's to add to, they are
-disjoint, and no work falls outside them, so `any(outstanding.values())` is the
-whole answer to "is anything running" even for a count added after you wrote
-this. Between a process exiting and its replacement's first message the counts
+each. `input_requests` carries the complete live question forms and is empty
+when none are pending. `outstanding.input`, when enabled, overlaps the turn
+count and is not an additional turn. `outstanding` is agent-proxy's own count
+vector, forwarded as it arrives.
+**do not hard-code its keys.** They are agent-proxy's to add to and are
+complete, so `any(outstanding.values())` answers "is anything running" even
+for a count added after you wrote this. Between a process exiting and its replacement's first message the counts
 are the last ones seen, zeroed; a session that has never run a process reports
 `{}`.
 

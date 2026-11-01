@@ -24,7 +24,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from typing import Any
 
-from r2d2box import AgentConfig, AgentHost, agent_of
+from r2d2box import AgentConfig, AgentHost, AgentProxy, agent_of
 
 
 class FakeProxy:
@@ -105,6 +105,19 @@ class FakeProxy:
         self.submits.append({"type": "cancel", "turn": turn, "ref": ref})
         if self.auto_ack:
             await self.ack_cancel(turn, ref)
+
+    # Exercise the real answer command shape at the fake's pipe boundary.
+    answer = AgentProxy.answer
+
+    async def send(self, command: dict[str, Any]) -> None:
+        if not self._alive:
+            raise ConnectionError("agent-proxy is not running")
+        self.submits.append(command)
+        if self.auto_ack:
+            await self.emit({
+                "type": "ack", "request": command["request"], "ref": command["ref"],
+                "turn": {"id": "t-1", "kind": "user"},
+            })
 
     async def request_status(self, ref: str) -> None:
         if not self._alive:

@@ -201,6 +201,17 @@ class AgentProxy:
         """
         await self.send({"type": "cancel", "turn": turn, "ref": ref})
 
+    async def answer(
+        self, request: str, answers: dict[str, Any] | None, ref: str, *, dismiss: bool = False
+    ) -> None:
+        """Answer or dismiss a structured request without submitting another turn."""
+        command: dict[str, Any] = {"type": "answer", "request": request, "ref": ref}
+        if dismiss:
+            command["dismiss"] = True
+        else:
+            command["answers"] = answers
+        await self.send(command)
+
     async def request_status(self, ref: str) -> None:
         """Ask for a `state` message describing every unfinished turn and task.
 

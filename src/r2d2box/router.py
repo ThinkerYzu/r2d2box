@@ -200,7 +200,7 @@ class _ClientConnection:
                 _log.debug("r2d2box: a client socket stopped accepting sends: %s", exc)
                 return
 
-    # ---- the four client commands --------------------------------------------
+    # ---- the client commands --------------------------------------------
 
     async def _dispatch(self, command: dict[str, Any]) -> None:
         """Run one client command, answering with an error if it is not one.
@@ -215,6 +215,8 @@ class _ClientConnection:
             await self._attach(command)
         elif kind == "submit":
             await self._submit(command)
+        elif kind == "answer":
+            await self._answer(command)
         elif kind == "cancel":
             await self._cancel(command)
         elif kind == "status_query":
@@ -287,6 +289,19 @@ class _ClientConnection:
             # prompt.
             _log.exception("r2d2box: submit to %s/%s failed", session.topic, session.name)
             await self._error(f"the prompt failed: {exc}")
+
+    async def _answer(self, command: dict[str, Any]) -> None:
+        request = command.get("request")
+        try:
+            if self._session is None:
+                raise ValueError("attach to a session before answering")
+            await self._session.answer(
+                request, command.get("answers"), dismiss=command.get("dismiss", False)
+            )
+        except (ValueError, ConnectionError) as exc:
+            self._offer(self._connection_message(
+                "error", error=f"the answer was not accepted: {exc}", request=request
+            ))
 
     async def _cancel(self, command: dict[str, Any]) -> None:
         """Take a turn back, and let the broadcast report it.

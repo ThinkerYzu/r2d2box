@@ -482,3 +482,60 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* Active question forms stay visible outside the conversation's folded blocks. */
+.r2d2-questions {
+  flex: 0 1 auto;
+  max-height: 50%;
+  overflow-y: auto;
+  padding: var(--r2d2-gap);
+  border-top: 1px solid var(--r2d2-border);
+  background: var(--r2d2-bg);
+}
+.r2d2-question-form {
+  padding: var(--r2d2-gap);
+  margin-bottom: var(--r2d2-gap);
+  border: 1px solid var(--r2d2-user-accent);
+  border-radius: var(--r2d2-radius);
+  background: var(--r2d2-surface);
+}
+.r2d2-question-title, .r2d2-question-option-label { font-weight: 600; }
+.r2d2-question { min-width: 0; border: 0; padding: var(--r2d2-gap) 0; margin: 0; }
+.r2d2-question-header { color: var(--r2d2-user-accent); padding: 0; }
+.r2d2-question-text { margin: var(--r2d2-gap) 0; white-space: pre-wrap; }
+.r2d2-question-option {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--r2d2-gap);
+  padding: var(--r2d2-gap);
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.r2d2-question-option-copy { flex: 1; min-width: 0; }
+.r2d2-question-choice, .r2d2-question-other { accent-color: var(--r2d2-user-accent); }
+.r2d2-question-description { display: block; color: var(--r2d2-muted); white-space: pre-wrap; }
+.r2d2-question-free-text {
+  min-width: 0;
+  flex: 1;
+  padding: var(--r2d2-gap);
+  color: var(--r2d2-fg);
+  background: var(--r2d2-sunken);
+  border: 1px solid var(--r2d2-border);
+  border-radius: var(--r2d2-radius);
+  font: inherit;
+}
+.r2d2-question-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--r2d2-gap); }
+.r2d2-question-actions button {
+  background: var(--r2d2-button-bg);
+  color: var(--r2d2-fg);
+  padding: var(--r2d2-gap);
+  border: 1px solid var(--r2d2-border);
+  border-radius: var(--r2d2-radius);
+  font: inherit;
+  cursor: pointer;
+}
+.r2d2-question-actions button:hover { background: var(--r2d2-button-hover); }
+.r2d2-question-actions button:disabled { opacity: 0.5; cursor: default; }
+.r2d2-question-error { color: var(--r2d2-error-accent); }
+.r2d2-question-status, .r2d2-question-deadline, .r2d2-question-hint { color: var(--r2d2-muted); }
+.r2d2-question-form :focus-visible { outline: 2px solid var(--r2d2-user-accent); outline-offset: 2px; }
