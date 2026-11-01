@@ -10,13 +10,13 @@ import pytest
 from r2d2box import AgentConfig, agent_of, build_argv
 
 
-def test_empty_config_runs_a_bare_proxy():
-    assert build_argv(AgentConfig()) == ["agent-proxy"]
+def test_empty_config_enables_questions_and_keeps_permission_bypass():
+    assert build_argv(AgentConfig()) == ["agent-proxy", "--user-input"]
 
 
 def test_proxy_bin_replaces_the_default():
     assert build_argv(AgentConfig(proxy_bin="/opt/bin/agent-proxy")) == [
-        "/opt/bin/agent-proxy"
+        "/opt/bin/agent-proxy", "--user-input"
     ]
 
 
@@ -29,7 +29,7 @@ def test_every_field_maps_to_its_flag():
         extra_args=["--model", "opus"],
     )
     assert build_argv(config) == [
-        "agent-proxy",
+        "agent-proxy", "--user-input",
         "--append-system-prompt", "You are reviewing bug 1992198.",
         "--allowedTools", "mcp__notes__worklog_append", "mcp__notes__item_metadata",
         "--mcp-config", json.dumps({"mcpServers": {"notes": {"command": "python3"}}}),
@@ -39,7 +39,7 @@ def test_every_field_maps_to_its_flag():
 
 def test_cwd_is_not_an_argument():
     """`cwd` is the subprocess's working directory, not something agent-proxy parses."""
-    assert build_argv(AgentConfig(cwd=Path("/tmp"))) == ["agent-proxy"]
+    assert build_argv(AgentConfig(cwd=Path("/tmp"))) == ["agent-proxy", "--user-input"]
 
 
 def test_mcp_config_is_serialized_here():
@@ -51,7 +51,7 @@ def test_mcp_config_is_serialized_here():
 
 def test_resume_is_added_by_the_caller_not_the_config():
     argv = build_argv(AgentConfig(), resume="4f0d-abc")
-    assert argv == ["agent-proxy", "--resume", "4f0d-abc"]
+    assert argv == ["agent-proxy", "--user-input", "--resume", "4f0d-abc"]
 
 
 def test_resume_lands_before_extra_args():
@@ -62,7 +62,7 @@ def test_resume_lands_before_extra_args():
     brand new conversation instead of continuing one.
     """
     argv = build_argv(AgentConfig(extra_args=["--", "hello"]), resume="4f0d-abc")
-    assert argv == ["agent-proxy", "--resume", "4f0d-abc", "--", "hello"]
+    assert argv == ["agent-proxy", "--user-input", "--resume", "4f0d-abc", "--", "hello"]
     assert argv.index("--resume") < argv.index("--")
 
 
@@ -73,7 +73,7 @@ def test_no_resume_means_no_flag():
 
 def test_empty_collections_add_nothing():
     assert build_argv(AgentConfig(allowed_tools=[], mcp_config={}, extra_args=[])) == [
-        "agent-proxy"
+        "agent-proxy", "--user-input"
     ]
 
 
@@ -101,14 +101,14 @@ def test_session_flags_are_refused_even_without_a_resume():
 def test_agent_is_the_first_argument():
     assert build_argv(AgentConfig(agent="codex", extra_args=["--model", "gpt-5"]),
                       resume="thread-1") == [
-        "agent-proxy", "--agent", "codex", "--resume", "thread-1", "--model", "gpt-5",
+        "agent-proxy", "--agent", "codex", "--user-input", "--resume", "thread-1", "--model", "gpt-5",
     ]
 
 
 def test_no_agent_passes_no_flag():
-    """`None` is claude, and runs on an agent-proxy that predates `--agent`."""
-    assert build_argv(AgentConfig()) == ["agent-proxy"]
-    assert build_argv(AgentConfig(agent="claude")) == ["agent-proxy", "--agent", "claude"]
+    """`None` is claude, with no explicit --agent flag."""
+    assert build_argv(AgentConfig()) == ["agent-proxy", "--user-input"]
+    assert build_argv(AgentConfig(agent="claude")) == ["agent-proxy", "--agent", "claude", "--user-input"]
 
 
 def test_agent_of_names_the_default():
@@ -130,7 +130,7 @@ def test_codex_refuses_what_only_claude_has(fields):
 def test_codex_keeps_the_system_prompt():
     """agent-proxy maps it to the thread's developer instructions."""
     assert build_argv(AgentConfig(agent="codex", append_system_prompt="Be brief.")) == [
-        "agent-proxy", "--agent", "codex", "--append-system-prompt", "Be brief.",
+        "agent-proxy", "--agent", "codex", "--user-input", "--append-system-prompt", "Be brief.",
     ]
 
 
@@ -155,3 +155,16 @@ def test_agent_in_extra_args_is_refused(args):
     """The session records the agent next to its id, so only `agent` may choose it."""
     with pytest.raises(ValueError, match="AgentConfig.agent"):
         build_argv(AgentConfig(extra_args=args))
+
+
+@pytest.mark.parametrize("agent", [None, "claude", "codex"])
+@pytest.mark.parametrize("bypass", [True, False])
+def test_permission_bypass_policy_precedes_host_arguments_and_resume(agent, bypass):
+    argv = build_argv(AgentConfig(
+        agent=agent, bypass_permissions=bypass, extra_args=["--", "prompt"],
+    ), resume="session-1")
+    assert argv.count("--user-input") == 1
+    assert ("--no-bypass-permissions" in argv) is (not bypass)
+    assert "--dangerously-skip-permissions" not in argv
+    if not bypass:
+        assert argv.index("--no-bypass-permissions") < argv.index("--resume") < argv.index("--")

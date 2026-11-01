@@ -219,7 +219,7 @@ async def test_the_fixture_is_reached_through_the_real_build_argv(scripted_confi
     config = scripted_config("silent.jsonl", append_system_prompt="be brief")
     argv = build_argv(config)
     assert argv[0] == str(SCRIPTED_PROXY)
-    assert argv[1:3] == ["--append-system-prompt", "be brief"]
+    assert argv[1:4] == ["--user-input", "--append-system-prompt", "be brief"]
 
     proxy = await AgentProxy.start(config)
     try:

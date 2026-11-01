@@ -25,20 +25,23 @@ pip install 'git+https://github.com/ThinkerYzu/r2d2box@v0.2.0'
 pip install -e /path/to/r2d2box
 ```
 
+The always-enabled questions and permission options below are unreleased and
+require installing the current r2d2box checkout, not its v0.2.0 artifacts.
+
 Two things have to be on the machine that r2d2box does not install:
 
 | Needs | Why | Where from |
 |---|---|---|
-| `agent-proxy` on `$PATH` | the only way r2d2box reaches an agent | [agent-proxy](https://github.com/ThinkerYzu/agent-proxy), `pip install 'git+https://github.com/ThinkerYzu/agent-proxy@v0.2.0'` |
-| `claude` on `$PATH` | what agent-proxy drives | Claude Code 2.1.221 or newer |
-| or `codex` on `$PATH`, signed in with ChatGPT | the other agent agent-proxy drives, for `AgentConfig(agent="codex")` | the Codex CLI; requires agent-proxy `v0.2.0` or newer |
+| `agent-proxy` on `$PATH` | the only way r2d2box reaches an agent | [agent-proxy](https://github.com/ThinkerYzu/agent-proxy), `pip install -e /path/to/agent-proxy` (current checkout) |
+| `claude` on `$PATH` | what agent-proxy drives | Claude Code 2.1.316 or newer |
+| or `codex` on `$PATH`, signed in with ChatGPT | the other agent agent-proxy drives, for `AgentConfig(agent="codex")` | the Codex CLI; requires the question-capable agent-proxy checkout |
 
 Agent-proxy `v0.2.0` supplies the Codex backend and turn cancellation. For
 Claude, it defaults to `--autocompact 1m` to prevent the optional context-window
-dialog from blocking queued prompts; Claude Code 2.1.221 or newer is required.
+dialog from blocking queued prompts; Claude Code 2.1.316 or newer is required.
 An explicit `--autocompact` in `AgentConfig.extra_args` overrides that default.
 
-**agent-proxy is a separate install**, from its own tag rather than PyPI, and
+**agent-proxy is a separate install**, from its current checkout rather than PyPI, and
 r2d2box does not run end to end without it. Everything below describes the API
 as built and tested; the test
 suite itself needs neither binary.
@@ -307,8 +310,8 @@ browser learns the same thing from `turn_active` and `task_ids`.
 
 ### `AgentConfig`
 
-Every field is optional, and a default-constructed `AgentConfig` runs a bare
-`agent-proxy`.
+Every field is optional. A default-constructed `AgentConfig` runs
+`agent-proxy --user-input`, with permission bypass enabled.
 
 | Field | Becomes |
 |---|---|
@@ -318,7 +321,7 @@ Every field is optional, and a default-constructed `AgentConfig` runs a bare
 | `mcp_config` | `--mcp-config`, with the dict serialized to JSON |
 | `extra_args` | appended verbatim |
 | `proxy_bin` | the binary to run; defaults to `agent-proxy` on `$PATH` |
-| `user_input` | `--user-input` when true; default false. Requires the question-capable upstream working checkout |
+| `bypass_permissions` | defaults to true; false adds `--no-bypass-permissions`. `--user-input` is always sent |
 | `agent` | `--agent`, first: `"claude"` or `"codex"`. `None`, the default, passes no flag and runs claude |
 
 There is no `resume` field. The session owns the agent's session id and adds
@@ -327,9 +330,10 @@ There is no `resume` field. The session owns the agent's session id and adds
 `--fork-session`, or their `=` forms — raises `ValueError` at spawn rather than
 silently running the wrong conversation.
 
-Agent-proxy supplies `--dangerously-skip-permissions` and, unless user input
-is enabled, the `AskUserQuestion` denial; callers need not add them. Do not
-pass `--agent` in `extra_args` either; it raises `ValueError`, because the session records which agent its id belongs to.
+Agent-proxy supplies permission bypass by default. Set `bypass_permissions=False`
+to request native checks and approvals. Questions are always enabled by r2d2box.
+Do not pass `--agent` in `extra_args` either; it raises `ValueError`, because
+the session records which agent its id belongs to.
 
 #### Running codex
 
@@ -362,14 +366,19 @@ counts stay at 0. A turn codex reports as failed carries codex's reason in
 
 ### Structured questions
 
-Enable agent questions with `AgentConfig(user_input=True)` for either backend.
-This requires agent-proxy's **working checkout with `--user-input`**, an
-unreleased extension absent from v0.2.0. Claude questions require Claude Code
-**2.1.316 or newer**. Codex input support is validated upstream on 0.163.0.
-The default remains off, so existing installations keep working.
+Questions are always enabled for either backend: every launch passes
+`--user-input`. There is no `AgentConfig.user_input` field or demo question toggle.
+The former `AgentConfig(user_input=True)` setting should be removed from callers.
+This checkout requires agent-proxy's **working checkout with `--user-input`**,
+an unreleased extension absent from v0.2.0, even for the default configuration.
+Claude requires Claude Code **2.1.316 or newer**. Codex input support is
+validated upstream on 0.163.0.
 
-The shipped box shows active requests above its composer. Each question keeps
-its header, text, option labels and descriptions. Radio buttons allow one
+The shipped box shows active requests in normal flow inside the conversation.
+Forms, operation details and action buttons scroll with the messages. There
+is no floating prompt panel, separate height cap or sticky action row. Long
+text and paths wrap within the host width. Each question keeps its header,
+text, option labels and descriptions. Radio buttons allow one
 choice, checkboxes allow several, and text is offered only when permitted.
 Secret text uses a password field. Nothing is preselected. **Submit answers**
 sends the whole batch; **Dismiss** returns no selection. Neither creates a new
@@ -409,6 +418,37 @@ Snapshot entries add the localized `turn` and `state` (`pending` or `answering`)
 The library does not add answer contents to transcripts or broadcasts. The
 proxy's own diagnostic logging and ordinary backend tool-result messages retain
 their upstream behavior; secret input masking is a display feature.
+
+### Permission approvals
+
+`AgentConfig(bypass_permissions=True)` is the default and keeps agent-proxy's
+existing permission bypass. Set `bypass_permissions=False` to pass
+`--no-bypass-permissions` before host arguments, including on resume. This
+requires the upstream checkout with that flag. It does not change saved agent
+settings, and does not require a different question setting.
+
+Claude uses native permission checks (manual mode unless a non-bypass mode is
+explicitly supplied). Codex uses `workspace-write`, on-request approvals and
+the user reviewer; an explicit `read-only` sandbox is preserved. The proxy
+rejects flags that conflict with restricted operation. Already-permitted
+operations need not ask for approval.
+
+Permission requests are ordinary `input_request` messages with
+`request.kind: "permission"` and a `request.permission` object. The box labels
+them **Permission requested**, displays the complete operation metadata as
+plain text (commands, paths, changes, requested access and working directory),
+and renders the supplied choices. Do not assume Allow is offered. The reader
+selects a choice and clicks **Submit decision**, or clicks **Deny request** to
+dismiss. No option is preselected and reconnect never grants approval.
+
+The existing batched `answer` command, request ids, shared answering state,
+expiry and `input_resolved` lifecycle are used unchanged. Dismissal, expiry,
+cancellation and disconnect of the proxy's input transport deny pending
+permission requests. A browser disconnect merely detaches that tab and the
+request stays available to other tabs and reconnects. Each operation needs its
+own decision; no saved rule or session grant is created. An `answered`
+resolution confirms delivery of either Allow or Deny, not successful execution.
+Unsupported native approval variants are rejected explicitly by agent-proxy.
 
 ### Transcript stores
 

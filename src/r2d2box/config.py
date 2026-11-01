@@ -43,16 +43,17 @@ class AgentConfig:
 
     Every field is optional, and every one maps to an agent-proxy argument or to
     the subprocess itself. A default-constructed `AgentConfig` is valid and runs
-    a bare `agent-proxy`.
+    `agent-proxy --user-input`, with permission bypass enabled by default.
 
     `agent` picks agent-proxy's inner agent, `"claude"` or `"codex"`; `None`
-    passes no `--agent` at all, which is claude and works with an agent-proxy
-    that predates the flag. Codex takes no tool allowlist and no MCP config, so
-    a codex config with either is refused by `build_argv` rather than by
+    passes no `--agent` at all, which is claude. Codex takes no tool allowlist
+    and no MCP config, so a codex config with either is refused by `build_argv` rather than by
     agent-proxy after the process has started.
 
-    `user_input=True` enables the structured question bridge with --user-input.
-    It requires a question-capable agent-proxy; the default is off.
+    Structured questions are always enabled with `--user-input`.
+    `bypass_permissions=False` adds `--no-bypass-permissions`, restoring native
+    checks and relaying approvals through the same choice interface. Both
+    features require the corresponding agent-proxy checkout.
 
     There is deliberately no `resume` field. The agent's session id belongs to
     the session, which adds `--resume` itself; a host that writes one into
@@ -67,7 +68,7 @@ class AgentConfig:
     extra_args: Sequence[str] = ()
     proxy_bin: str | None = None
     agent: str | None = None
-    user_input: bool = False
+    bypass_permissions: bool = True
 
 
 def agent_of(config: AgentConfig) -> str:
@@ -83,10 +84,9 @@ def build_argv(config: AgentConfig, resume: str | None = None) -> list[str]:
     `config.extra_args` carries a session-control flag or `--agent`, or if a
     codex config asks for something codex has no equivalent of.
 
-    Nothing here duplicates what agent-proxy adds for itself:
-    `--dangerously-skip-permissions` and the `AskUserQuestion` denial are its
-    job (its API.md § Invocation), and passing them again would be a second
-    place to keep in step with it.
+    Questions are always enabled. Permission bypass is agent-proxy's default;
+    only an explicit opt-out is sent. The proxy owns backend-specific native
+    permission policy and rejects conflicting host arguments.
     """
     codex = config.agent == CODEX_AGENT
     if codex:
@@ -98,8 +98,9 @@ def build_argv(config: AgentConfig, resume: str | None = None) -> list[str]:
     argv = [config.proxy_bin or DEFAULT_PROXY_BIN]
     if config.agent:
         argv += [_AGENT_FLAG, config.agent]
-    if config.user_input:
-        argv += ["--user-input"]
+    argv += ["--user-input"]
+    if not config.bypass_permissions:
+        argv += ["--no-bypass-permissions"]
     if config.append_system_prompt:
         argv += ["--append-system-prompt", config.append_system_prompt]
     if config.allowed_tools:

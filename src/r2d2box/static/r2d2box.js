@@ -568,7 +568,6 @@
     this.composerEl.appendChild(this.stopEl);
     this.composerEl.appendChild(this.sendEl);
     this.el.appendChild(this.messagesEl);
-    this.el.appendChild(this.questionsEl);
     this.el.appendChild(this.composerEl);
 
     this.sendEl.addEventListener('click', function () { self.submit(); });
@@ -771,7 +770,9 @@
       if (resolved) {
         this.questionsEl.removeChild(resolved.el);
         delete this.inputForms[message.request];
-        this.questionsEl.style.display = Object.keys(this.inputForms).length ? '' : 'none';
+        if (!Object.keys(this.inputForms).length && this.questionsEl.parentNode) {
+          this.questionsEl.parentNode.removeChild(this.questionsEl);
+        }
       }
     } else if (type === 'process_exited') {
       this.syncInputRequests([]);
@@ -788,6 +789,7 @@
    */
   Box.prototype.draw = function (message) {
     if (message.type === 'input_request') {
+      if (this.inputForms[message.request.id]) return;
       this.appendNote((message.request.questions || []).map(function (q) { return q.question; }).join(' '));
       return;
     }
@@ -930,8 +932,8 @@
 
   /** Empty the screen and everything derived from the old conversation. */
   Box.prototype.reset = function () {
-    this.messagesEl.textContent = '';
     this.syncInputRequests([]);
+    this.messagesEl.textContent = '';
     this.turns = {};
     this.turnOrder = [];
     this.openTurns = {};
@@ -1047,27 +1049,36 @@
 
   /** Build only live forms. Transcript replay never makes an old request actionable. */
   Box.prototype.syncInputRequests = function (requests) {
-    var live = {};
-    for (var i = 0; i < requests.length; i++) {
-      var request = requests[i];
-      live[request.id] = true;
-      var form = this.inputForms[request.id];
-      if (!form) {
-        form = this.buildInputForm(request);
-        this.inputForms[request.id] = form;
-        this.questionsEl.appendChild(form.el);
+    var self = this;
+    withScrollAnchor(this.messagesEl, function () {
+      var live = {};
+      for (var i = 0; i < requests.length; i++) {
+        var request = requests[i];
+        live[request.id] = true;
+        var form = self.inputForms[request.id];
+        if (!form) {
+          form = self.buildInputForm(request);
+          self.inputForms[request.id] = form;
+          self.questionsEl.appendChild(form.el);
+        }
+        form.state = request.state || 'pending';
+        self.updateInputForm(form);
       }
-      form.state = request.state || 'pending';
-      this.updateInputForm(form);
-    }
-    for (var id in this.inputForms) {
-      if (!live[id]) {
-        var stale = this.inputForms[id];
-        this.questionsEl.removeChild(stale.el);
-        delete this.inputForms[id];
+      for (var id in self.inputForms) {
+        if (!live[id]) {
+          var stale = self.inputForms[id];
+          self.questionsEl.removeChild(stale.el);
+          delete self.inputForms[id];
+        }
       }
-    }
-    this.questionsEl.style.display = requests.length ? '' : 'none';
+      if (requests.length) {
+        self.questionsEl.style.display = '';
+        if (!self.questionsEl.parentNode) self.messagesEl.appendChild(self.questionsEl);
+        self.pinStatus();
+      } else if (self.questionsEl.parentNode) {
+        self.questionsEl.parentNode.removeChild(self.questionsEl);
+      }
+    });
   };
 
   Box.prototype.updateInputForm = function (form) {
@@ -1089,7 +1100,15 @@
       el: make(this.doc, 'form', 'r2d2-question-form'), request: request,
       fields: [], controls: [], state: request.state || 'pending', sending: false,
     };
-    form.el.appendChild(make(this.doc, 'div', 'r2d2-question-title', 'The agent has a question'));
+    var permission = request.kind === 'permission';
+    form.el.appendChild(make(this.doc, 'div', 'r2d2-question-title',
+      permission ? 'Permission requested' : 'The agent has a question'));
+    if (permission) {
+      var details = make(this.doc, 'pre', 'r2d2-permission-details');
+      details.setAttribute('aria-label', 'Operation details');
+      details.textContent = JSON.stringify(request.permission || {}, null, 2);
+      form.el.appendChild(details);
+    }
     if (request.expires_at) {
       form.el.appendChild(make(this.doc, 'div', 'r2d2-question-deadline',
         'Answer by ' + request.expires_at));
@@ -1155,9 +1174,11 @@
     form.error.setAttribute('role', 'alert');
     form.el.appendChild(form.error);
     var actions = make(this.doc, 'div', 'r2d2-question-actions');
-    form.submit = make(this.doc, 'button', 'r2d2-question-submit', 'Submit answers');
+    form.submit = make(this.doc, 'button', 'r2d2-question-submit',
+      permission ? 'Submit decision' : 'Submit answers');
     form.submit.type = 'submit';
-    form.dismiss = make(this.doc, 'button', 'r2d2-question-dismiss', 'Dismiss');
+    form.dismiss = make(this.doc, 'button', 'r2d2-question-dismiss',
+      permission ? 'Deny request' : 'Dismiss');
     form.dismiss.type = 'button';
     form.status = make(this.doc, 'span', 'r2d2-question-status');
     form.status.setAttribute('role', 'status');

@@ -155,3 +155,85 @@ test('input: arbitrary backend question ids are preserved as answer keys', () =>
   ok(Object.prototype.hasOwnProperty.call(answers, '__proto__'), 'question id is an own key');
   equal(answers.__proto__, { choices: ['o-1'] }, 'answer preserved');
 });
+
+test('permission: show operation details literally and send only the selected supplied id', () => {
+  const req = request({ kind: 'permission', permission: {
+    agent: 'claude', tool: 'Bash', input: { command: 'echo <script>hello</script>' },
+    cwd: '/work', scope: 'operation',
+  } });
+  req.questions[0].allow_text = false;
+  req.questions[0].options = [
+    { id: 'refuse', label: 'Deny', description: 'Do not execute' },
+    { id: 'once', label: 'Allow once', description: 'Execute once' },
+  ];
+  const { form, socket } = setup(req);
+  includes(form.el.textContent, 'Permission requested', 'permission title');
+  const details = form.el.querySelector('.r2d2-permission-details');
+  includes(details.textContent, 'echo <script>hello</script>', 'complete command');
+  includes(details.textContent, '/work', 'working directory');
+  equal(details.innerHTML, '', 'details are plain text');
+  equal(form.submit.textContent, 'Submit decision', 'decision button');
+  equal(form.dismiss.textContent, 'Deny request', 'dismiss semantics');
+  submit(form);
+  equal(socket.ofType('answer').length, 0, 'nothing automatically approved');
+  form.fields[0].choices[1].checked = true;
+  submit(form);
+  equal(socket.ofType('answer')[0].answers, { 'q-1': { choices: ['once'] } }, 'supplied choice id');
+});
+
+test('permission: deny-only requests never invent an allow choice and dismissal selects nothing', () => {
+  const req = request({ kind: 'permission', permission: { agent: 'codex', operation: { path: '/tmp/marker' } } });
+  req.questions[0].allow_text = false;
+  req.questions[0].options = [{ id: 'native-deny', label: 'Deny', description: 'Cancel' }];
+  const { form, socket } = setup(req);
+  equal(form.fields[0].choices.length, 1, 'only supplied choice');
+  equal(form.fields[0].text, null, 'no text');
+  form.dismiss.dispatch('click');
+  equal(socket.ofType('answer')[0], { type: 'answer', request: req.id, dismiss: true }, 'dismiss without choice');
+});
+
+test('permission: reconnect restores native operation details with no selection', () => {
+  const req = request({ kind: 'permission', state: 'pending', permission: {
+    agent: 'codex', method: 'item/fileChange/requestApproval',
+    operation: { changes: [{ path: '/work/example.txt', diff: '+hello' }] },
+    item: { id: 'native-change' },
+  } });
+  const { box } = mountBox({ state: { input_requests: [req] } });
+  const form = box.inputForms[req.id];
+  includes(form.el.textContent, '/work/example.txt', 'path restored');
+  includes(form.el.textContent, '+hello', 'diff restored');
+  includes(form.el.textContent, 'native-change', 'item metadata restored');
+  ok(form.fields[0].choices.every(c => !c.checked), 'no approval selected on restore');
+});
+
+test('input: live forms are in the message flow and detach when the last request resolves', () => {
+  const { box, socket, form } = setup();
+  ok(form.el.parentNode.parentNode === box.messagesEl, 'form belongs to the conversation scroller');
+  ok(box.questionsEl.parentNode === box.messagesEl, 'question container is in message flow');
+  ok(box.questionsEl.parentNode !== box.el, 'no separate prompt panel');
+  socket.deliver(broadcast(2, { type: 'input_resolved', request: 'input-1', reason: 'answered' }));
+  equal(box.questionsEl.parentNode, null, 'empty container detached');
+  socket.deliver(broadcast(3, { type: 'input_request', request: request({ id: 'input-2' }) }));
+  ok(box.questionsEl.parentNode === box.messagesEl, 'next request returns to message flow');
+  ok(box.inputForms['input-2'].el.parentNode === box.questionsEl, 'new form attached');
+});
+
+test('input: reattach restores forms after conversation history and preserves scroll position on updates', () => {
+  const req = request({ state: 'pending' });
+  const { box, socket } = mountBox({ transcript: [{ id: 't-1', kind: 'user', user: 'Earlier question', events: [
+    { type: 'text', text: 'Earlier answer', turn: turn('t-1') },
+    { type: 'turn_end', turn: turn('t-1'), outcome: 'success' },
+  ] }], state: { input_requests: [req] } });
+  const form = box.inputForms[req.id];
+  ok(box.messagesEl.children.indexOf(box.questionsEl) > box.messagesEl.children.indexOf(box.turns['t-1'].el),
+    'restored forms follow replayed conversation');
+  box.messagesEl.scrollHeight = 1000;
+  box.messagesEl.clientHeight = 200;
+  box.messagesEl.scrollTop = 100;
+  socket.deliver({ type: 'status', seq: 0, input_requests: [req], turn_ids: [], tasks: [] });
+  ok(box.inputForms[req.id] === form, 'form and draft preserved');
+  equal(box.messagesEl.scrollTop, 100, 'reader is not forced to bottom');
+  socket.deliver({ type: 'attached', seq: 0, session: 's2', turns: [], input_requests: [request({ id: 'new' })] });
+  ok(box.questionsEl.parentNode === box.messagesEl, 'forms survive reset and mount inside conversation');
+  equal(Object.keys(box.inputForms), ['new'], 'old session form removed');
+});

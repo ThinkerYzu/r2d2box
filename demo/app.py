@@ -3,7 +3,8 @@
     .venv/bin/python -m uvicorn demo.app:app --port 8790
     # then open http://localhost:8790/
 
-`R2D2BOX_DEMO_AGENT=codex` runs codex instead of claude.
+`R2D2BOX_DEMO_AGENT=codex` runs codex instead of claude. Questions are always
+enabled; `R2D2BOX_DEMO_BYPASS_PERMISSIONS=0` enables native approval requests.
 
 Everything here is what a real host supplies and nothing else: the agent's
 configuration, the topic keys, and the page the box is mounted into. The
@@ -41,7 +42,7 @@ def agent_config(topic: str, session: str) -> AgentConfig:
     """
     return AgentConfig(
         agent=AGENT,
-        user_input=os.environ.get("R2D2BOX_DEMO_USER_INPUT") == "1",
+        bypass_permissions=os.environ.get("R2D2BOX_DEMO_BYPASS_PERMISSIONS") != "0",
         cwd=DEMO_DIR,
         append_system_prompt=(
             f"You are the assistant in a demo chat panel, talking about {topic!r}. "

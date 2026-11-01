@@ -29,9 +29,9 @@ async def emit_question(proxy, raw_id="i-1", *, blocking=True):
 
 
 @pytest.mark.parametrize("agent", [None, "codex"])
-def test_question_bridge_is_explicit_opt_in(agent):
-    assert "--user-input" not in build_argv(AgentConfig(agent=agent))
-    argv = build_argv(AgentConfig(agent=agent, user_input=True, extra_args=["--", "hello"]))
+def test_question_bridge_is_always_enabled(agent):
+    assert "--user-input" in build_argv(AgentConfig(agent=agent))
+    argv = build_argv(AgentConfig(agent=agent, extra_args=["--", "hello"]))
     assert argv.index("--user-input") < argv.index("--")
 
 
@@ -199,3 +199,29 @@ async def test_process_exit_wakes_an_answer_waiter_and_clears_forms(started_sess
         await caller
     await wait_until(lambda: not session.input_requests)
     assert not session.active
+
+
+async def test_permission_metadata_survives_broadcast_and_reconnect_snapshot(started_session):
+    session, proxy, _ = await started_session()
+    payload = question()
+    payload.update(kind="permission", permission={
+        "agent": "codex", "method": "item/commandExecution/requestApproval",
+        "operation": {"command": "printf hello", "cwd": "/work"},
+        "item": {"id": "native-item"}, "scope": "operation",
+    })
+    payload["questions"][0].update(allow_text=False, options=[
+        {"id": "deny", "label": "Deny", "description": "Do not run"},
+    ])
+    peer = RecordingSubscriber()
+    await session.attach(peer)
+    await proxy.emit({"type": "input_request", "request": payload,
+                      "turn": {"id": "t-1", "kind": "user"}})
+    await proxy.drain()
+    broadcast = peer.messages[-1]
+    assert broadcast["request"]["permission"] == payload["permission"]
+    snapshot = await session.snapshot()
+    live = snapshot["input_requests"][0]
+    assert live["permission"] == payload["permission"]
+    assert live["kind"] == "permission"
+    await session.answer(live["id"], {"q-1": {"choices": ["deny"]}})
+    assert proxy.submits[-1]["answers"] == {"q-1": {"choices": ["deny"]}}

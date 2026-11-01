@@ -20,8 +20,9 @@ the Python API, the JavaScript API, the WebSocket messages, and what migrating
 an existing app involves.
 
 > **You need `agent-proxy`.** It is the only way r2d2box reaches an agent, and
-> it is a separate tool — published since 2026-08-17, installed from its tag:
-> `pip install 'git+https://github.com/ThinkerYzu/agent-proxy@v0.2.0'`. See
+> it is a separate tool. This unreleased checkout needs the current agent-proxy
+> checkout with structured-input support:
+> `pip install -e /path/to/agent-proxy` (current checkout). See
 > [Requirements](#requirements).
 
 ```python
@@ -105,14 +106,14 @@ left work behind.
 | Needs | Why | Where from |
 |---|---|---|
 | Python ≥ 3.11, `fastapi` ≥ 0.110 | the router you mount | pip, as this package's dependency |
-| `agent-proxy` on `$PATH` | **the only way r2d2box reaches an agent** | [agent-proxy](https://github.com/ThinkerYzu/agent-proxy), `pip install 'git+https://github.com/ThinkerYzu/agent-proxy@v0.2.0'` |
-| `claude` on `$PATH` | what agent-proxy drives | Claude Code 2.1.221 or newer |
-| or `codex` on `$PATH` | the other agent agent-proxy drives, for `AgentConfig(agent="codex")` | the Codex CLI, signed in with ChatGPT; requires agent-proxy `v0.2.0` or newer |
+| `agent-proxy` on `$PATH` | **the only way r2d2box reaches an agent** | [agent-proxy](https://github.com/ThinkerYzu/agent-proxy), `pip install -e /path/to/agent-proxy` (current checkout) |
+| `claude` on `$PATH` | what agent-proxy drives | Claude Code 2.1.316 or newer |
+| or `codex` on `$PATH` | the other agent agent-proxy drives, for `AgentConfig(agent="codex")` | the Codex CLI, signed in with ChatGPT; requires the question-capable agent-proxy checkout |
 | `uvicorn[standard]` | a plain `uvicorn` serves no WebSocket | pip, for the demo or your own server |
 
 Agent-proxy `v0.2.0` supplies the Codex backend and turn cancellation. For
 Claude, it defaults to `--autocompact 1m` to prevent the optional context-window
-dialog from blocking queued prompts; Claude Code 2.1.221 or newer is required.
+dialog from blocking queued prompts; Claude Code 2.1.316 or newer is required.
 An explicit `--autocompact` in `AgentConfig.extra_args` overrides that default.
 
 **About agent-proxy.** r2d2box does not spawn `claude` or `codex` itself, does
@@ -123,17 +124,30 @@ boundaries explicitly the same way for both — every message carries a turn id,
 a kind, and the outstanding user/unowned/background counts. Its
 [API.md](https://github.com/ThinkerYzu/agent-proxy/blob/master/API.md) is the
 contract everything here is built on. What runs without any of these binaries
-is the whole test suite: 275 tests pass with none installed, because every
+is the whole test suite: 282 tests pass with none installed, because every
 layer is tested against a stand-in for the one below it.
 
 ## Agent questions
 
-Set `AgentConfig(user_input=True)` to let either agent ask structured questions.
+Questions are always enabled for either agent. There is no `user_input` toggle.
 The box shows choice controls, permitted free text, and Submit answers / Dismiss
-controls, synchronized across tabs and reconnects. See
-[Structured questions](API.md#structured-questions) for requirements and protocol.
-This opt-in feature requires the question-capable agent-proxy working checkout;
-Claude questions need Claude Code 2.1.316 or newer.
+controls, synchronized across tabs and reconnects. Forms render in the
+conversation and scroll with the messages. See
+[Structured questions](API.md#structured-questions) for the protocol.
+This checkout requires the question-capable agent-proxy working checkout;
+Claude needs Claude Code 2.1.316 or newer.
+
+Permission bypass remains enabled by default. To use native permission checks
+and answer approval requests in the box, set:
+
+```python
+AgentConfig(bypass_permissions=False)
+```
+
+This adds agent-proxy's `--no-bypass-permissions`. Permission forms display the
+operation details and the supplied choices, with nothing preselected.
+The proxy enforces decisions; dismissing a permission request denies it.
+See [Permission approvals](API.md#permission-approvals) for requirements.
 
 ## Running the demo
 
@@ -158,7 +172,7 @@ await session.submit("why does it crash?")
 To try questions, install the question-capable agent-proxy checkout and run:
 
 ```bash
-R2D2BOX_DEMO_USER_INPUT=1 .venv/bin/python -m uvicorn demo.app:app --host 127.0.0.1 --port 8790
+.venv/bin/python -m uvicorn demo.app:app --host 127.0.0.1 --port 8790
 ```
 
 Keep the command running and open [the demo](http://localhost:8790/). For Claude,
@@ -171,14 +185,18 @@ Select an answer and click **Submit answers**. Add `R2D2BOX_DEMO_AGENT=codex`
 to the launch command for Codex, and ask it to use `request_user_input` instead.
 Open the same session URL in another tab to watch the form state synchronize.
 
+To try native approvals, prefix the same command with
+`R2D2BOX_DEMO_BYPASS_PERMISSIONS=0`. The default is to bypass permissions;
+questions work in both modes without another setting.
+
 ## Development
 
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
-.venv/bin/pytest                             # 275 tests, ~1s; needs no `claude`
-node tests/js/run.js                         # the front-end's 69, on their own
-R2D2BOX_RUN_LIVE=1 .venv/bin/pytest -m live  # 12 live tests; needs agent-proxy, claude and codex
+.venv/bin/pytest                             # 282 tests, ~1s; needs no `claude`
+node tests/js/run.js                         # the front-end's 74, on their own
+R2D2BOX_RUN_LIVE=1 .venv/bin/pytest -m live  # 16 live tests; needs agent-proxy, claude and codex
 ```
 
 Nothing in the default suite needs `claude`, and each layer is tested without
