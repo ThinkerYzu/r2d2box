@@ -8,7 +8,7 @@ Where something here reads as arbitrary, the module docstring for it carries
 the reasoning — most of this library's rules exist because an earlier
 implementation got them wrong.
 
-**Contents:** [Install](#install) · [Quick start](#quick-start) ·
+**Contents:** [Install](#install) · [Standalone server](#standalone-server) · [Quick start](#quick-start) ·
 [Python API](#python-api) · [Structured questions](#structured-questions) · [JavaScript API](#javascript-api) ·
 [WebSocket protocol](#websocket-protocol) · [Session REST](#session-rest) ·
 [Failure behavior](#failure-behavior) · [Migrating an existing app](#migrating-an-existing-app)
@@ -25,8 +25,9 @@ pip install 'git+https://github.com/ThinkerYzu/r2d2box@v0.2.0'
 pip install -e /path/to/r2d2box
 ```
 
-The always-enabled questions and permission options below are unreleased and
-require installing the current r2d2box checkout, not its v0.2.0 artifacts.
+The standalone CLI, always-enabled questions and permission options below are
+unreleased and require installing the current r2d2box checkout, not its
+v0.2.0 artifacts.
 
 Two things have to be on the machine that r2d2box does not install:
 

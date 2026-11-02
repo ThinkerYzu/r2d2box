@@ -15,7 +15,8 @@ provides.
 
 **Status:** complete. An application mounts the router and gets a WebSocket two
 tabs can share, session REST for its own furniture, and the chat box served
-beside them. `demo/` is a working host; **[API.md](API.md) is the reference** —
+beside them. The [standalone server](#standalone-session-server) runs that
+router without writing a host app. `demo/` is an embedding example; **[API.md](API.md) is the reference** —
 the Python API, the JavaScript API, the WebSocket messages, and what migrating
 an existing app involves.
 
@@ -103,7 +104,8 @@ left work behind.
 
 ## Standalone session server
 
-Install the current checkout with `pip install -e .`, then run:
+The CLI is unreleased and is available in the current checkout, not the
+v0.2.0 release artifacts. Install the checkout with `pip install -e .`, then run:
 
 ```bash
 r2d2box
@@ -165,7 +167,7 @@ boundaries explicitly the same way for both — every message carries a turn id,
 a kind, and the outstanding user/unowned/background counts. Its
 [API.md](https://github.com/ThinkerYzu/agent-proxy/blob/master/API.md) is the
 contract everything here is built on. What runs without any of these binaries
-is the whole test suite: 282 tests pass with none installed, because every
+is the whole test suite: 291 tests pass with none installed, because every
 layer is tested against a stand-in for the one below it.
 
 ## Agent questions
@@ -193,13 +195,12 @@ See [Permission approvals](API.md#permission-approvals) for requirements.
 ## Running the demo
 
 ```bash
-.venv/bin/pip install 'uvicorn[standard]'
 .venv/bin/python -m uvicorn demo.app:app --port 8790
 # then open http://localhost:8790/
 ```
 
-A whole host application in about 100 lines, and the fastest way to see two
-tabs sharing one conversation. `R2D2BOX_DEMO_AGENT=codex` runs it on codex.
+A whole host application in about 100 lines, showing the embedding API. For
+a packaged host, use the [standalone CLI](#standalone-session-server). `R2D2BOX_DEMO_AGENT=codex` runs it on codex.
 
 `box.host` is the `AgentHost` underneath, for a caller that also wants an agent
 outside a request — a cron job, a CLI:
