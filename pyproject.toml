@@ -16,7 +16,12 @@ license-files = ["LICENSE"]
 authors = [{ name = "Kui-Feng Lee" }]
 dependencies = [
     "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "websockets>=12",
 ]
+
+[project.scripts]
+r2d2box = "r2d2box.cli:main"
 
 [project.optional-dependencies]
 dev = [
@@ -30,7 +35,7 @@ where = ["src"]
 # The browser half ships inside the package — the mounted router
 # serves it, so a host installs one dependency and copies no files.
 [tool.setuptools.package-data]
-r2d2box = ["static/*.js", "static/*.css", "static/vendor/*.js"]
+r2d2box = ["server.html", "static/*.js", "static/*.css", "static/vendor/*.js"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

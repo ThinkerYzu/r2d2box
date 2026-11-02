@@ -50,8 +50,16 @@ The browser half ships **inside** the Python package and is served by the router
 you mount. There is no build step, no copy step, and nothing is fetched from a
 CDN at runtime — `marked` and DOMPurify are vendored beside the box.
 
-A WebSocket-capable server is also required: a plain `uvicorn` install serves no
-WebSocket. Use `pip install 'uvicorn[standard]'`.
+A WebSocket-capable server is also required. r2d2box installs `uvicorn` and
+`websockets` for its standalone server; embedded hosts can use those too.
+
+## Standalone server
+
+Run `r2d2box` (or `python -m r2d2box`) to serve sessions at
+<http://127.0.0.1:8790/> without writing a host application. The page supplies
+topic and session controls, while the same router below serves REST and
+WebSocket access under `/chat`. See the [CLI guide](README.md#standalone-session-server)
+for launch options, persistence, agent requirements and permission policy.
 
 ## Quick start
 

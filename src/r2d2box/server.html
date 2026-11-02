@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>r2d2box sessions</title>
+<link rel="stylesheet" href="/chat/static/r2d2box.css">
+<style>
+  /* The host's page. Everything here is outside the box: the panel frame, the
+     session picker, the buttons. The box itself gets one empty div. */
+  body {
+    margin: 0;
+    height: 100vh;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    font: 14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: #e0e0e0;
+    background: #1e1e1e;
+  }
+  #panel { display: flex; flex-direction: column; border-left: 1px solid #333; min-height: 0; }
+  #panel-header {
+    display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+    padding: 8px 12px; background: #2d2d2d; border-bottom: 1px solid #333;
+  }
+  #panel-header select, #panel-header button, #panel-header input {
+    background: #1e1e1e; color: #e0e0e0; border: 1px solid #444;
+    border-radius: 3px; padding: 3px 8px; font: inherit; font-size: 12px;
+  }
+  #panel-header button { cursor: pointer; }
+  #chat { flex: 1; min-height: 0; }
+  #panel-header select { max-width: 100%; }
+  #error { overflow-wrap: anywhere; }
+</style>
+</head>
+<body>
+
+
+<div id="panel">
+  <div id="panel-header">
+    <label>Topic <input id="topic" value="default" size="10"></label>
+    <select id="sessions" title="session"></select>
+    <button id="new-session" type="button">New</button>
+    <button id="close-session" type="button">Delete</button>
+    <span id="error" role="status"></span>
+  </div>
+  <div id="chat"></div>
+</div>
+
+<script src="/chat/static/vendor/marked.min.js"></script>
+<script src="/chat/static/vendor/purify.min.js"></script>
+<script src="/chat/static/r2d2box.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  var topicEl = document.getElementById('topic');
+  var sessionsEl = document.getElementById('sessions');
+
+  // The session in the URL, so a second tab can be opened on the same
+  // conversation by copying the address bar.
+  var params = new URLSearchParams(location.search);
+  if (params.get('topic')) topicEl.value = params.get('topic');
+
+  var box = R2D2Box.mount(document.getElementById('chat'), {
+    endpoint: '/chat',
+    topic: topicEl.value,
+    session: params.get('session') || null,
+  });
+
+  // The box reports the session it ended up attached to, whether the page
+  // named one or the server made one. That is what keeps the host's picker
+  // and the URL honest.
+  box.on('attached', function (message) {
+    params.set('topic', message.topic);
+    params.set('session', message.session);
+    history.replaceState(null, '', '?' + params.toString());
+    listSessions(message.session);
+  });
+
+  box.on('turn_end', function () {
+    listSessions(params.get('session'));
+  });
+
+  box.on('session_closed', function () {
+    listSessions(null);
+  });
+
+  async function listSessions(selected) {
+    var data;
+    try {
+      var response = await fetch('/chat/sessions/' + encodeURIComponent(topicEl.value));
+      if (!response.ok) throw new Error('Could not list sessions');
+      data = await response.json();
+      document.getElementById('error').textContent = '';
+    } catch (error) {
+      document.getElementById('error').textContent = error.message;
+      return;
+    }
+    sessionsEl.textContent = '';
+    data.sessions.forEach(function (entry) {
+      var option = document.createElement('option');
+      option.value = entry.session;
+      option.textContent = entry.preview
+        ? entry.preview.slice(0, 40) + ' (' + entry.turns + ')'
+        : entry.session + ' (new)';
+      if (entry.session === selected) option.selected = true;
+      sessionsEl.appendChild(option);
+    });
+  }
+
+  sessionsEl.addEventListener('change', function () {
+    box.attach(topicEl.value, sessionsEl.value);
+  });
+
+  topicEl.addEventListener('change', function () {
+    box.attach(topicEl.value, null);
+  });
+
+  document.getElementById('new-session').addEventListener('click', function () {
+    box.attach(topicEl.value, null);
+  });
+
+  document.getElementById('close-session').addEventListener('click', async function () {
+    if (!sessionsEl.value || !confirm('Delete this conversation and its transcript?')) return;
+    try {
+      var response = await fetch('/chat/sessions/' + encodeURIComponent(topicEl.value) + '/' +
+                                 encodeURIComponent(sessionsEl.value), { method: 'DELETE' });
+      if (!response.ok) throw new Error('Could not delete session');
+    } catch (error) {
+      document.getElementById('error').textContent = error.message;
+    }
+    // Nothing else to do: the session broadcasts `session_closed`, and the box
+    // clears itself and attaches to a fresh conversation.
+  });
+
+
+})();
+</script>
+</body>
+</html>

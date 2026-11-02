@@ -101,6 +101,47 @@ Working means a submit in flight, a turn running, or a background command still
 going — so it goes up before there is a process, and stays up after a turn that
 left work behind.
 
+## Standalone session server
+
+Install the current checkout with `pip install -e .`, then run:
+
+```bash
+r2d2box
+# equivalent: python -m r2d2box
+```
+
+Open <http://127.0.0.1:8790/> to create and switch conversations under a topic.
+Copy the page URL to share the same conversation between tabs. The server
+also exposes session REST at `/chat/sessions/{topic}`, streaming at `/chat/ws`,
+and browser assets at `/chat/static`. Agents start on the first prompt.
+
+```bash
+r2d2box --port 8800 --cwd /path/to/project --store /path/to/transcripts
+r2d2box --agent codex --no-bypass-permissions
+r2d2box --append-system-prompt 'Keep answers concise.'
+r2d2box --mcp-config /path/to/mcp.json --allowed-tool Read
+r2d2box --proxy-arg=--model --proxy-arg=haiku
+```
+
+The agent working directory defaults to the directory where the command is
+launched. Transcripts default to `~/.local/share/r2d2box/transcripts` and are
+restored on subsequent launches using the same store. Permission bypass is
+on by default; `--no-bypass-permissions` enables native approval forms.
+Questions are always enabled. Claude is the default agent; the separately
+installed, signed-in agent CLI and a current question-capable `agent-proxy`
+are required to submit prompts.
+
+`--host` defaults to `127.0.0.1`. The server has no authentication and runs
+agents with your local account, so use it on a trusted machine and network.
+`--proxy-bin` selects another agent-proxy executable. Repeat `--allowed-tool`
+or `--proxy-arg` for multiple entries. MCP configuration must be a JSON object;
+MCP and allowed-tool options apply to Claude. Session-selection flags such as
+`--resume` cannot be supplied through `--proxy-arg`, since the server owns
+conversation identity. Run `r2d2box --help` for all launch options.
+
+Stop with Ctrl+C to shut down the server and its agent processes. The CLI uses
+one server worker to keep each conversation attached to one process.
+
 ## Requirements
 
 | Needs | Why | Where from |
@@ -109,7 +150,7 @@ left work behind.
 | `agent-proxy` on `$PATH` | **the only way r2d2box reaches an agent** | [agent-proxy](https://github.com/ThinkerYzu/agent-proxy), `pip install -e /path/to/agent-proxy` (current checkout) |
 | `claude` on `$PATH` | what agent-proxy drives | Claude Code 2.1.316 or newer |
 | or `codex` on `$PATH` | the other agent agent-proxy drives, for `AgentConfig(agent="codex")` | the Codex CLI, signed in with ChatGPT; requires the question-capable agent-proxy checkout |
-| `uvicorn[standard]` | a plain `uvicorn` serves no WebSocket | pip, for the demo or your own server |
+| `uvicorn`, `websockets` | HTTP server and WebSocket transport | installed with r2d2box |
 
 Agent-proxy `v0.2.0` supplies the Codex backend and turn cancellation. For
 Claude, it defaults to `--autocompact 1m` to prevent the optional context-window
