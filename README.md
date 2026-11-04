@@ -6,6 +6,8 @@ A chat box for AI agents, as a library: one server-side agent host and one
 front-end chat panel, so an app that wants to embed a live agent — Claude Code
 or Codex — doesn't have to build either.
 
+![r2d2box standalone server showing a shared agent conversation, a tool call and a Python integration example](docs/images/r2d2box-screenshot.png)
+
 The host app supplies what is genuinely its own — the system prompt, and under
 Claude Code the MCP servers and the tool allowlist — and r2d2box supplies the
 rest: the `agent-proxy` subprocess and its turn correlation, the WebSocket that
