@@ -53,7 +53,7 @@ class AgentConfig:
     Structured questions are always enabled with `--user-input`.
     `bypass_permissions=False` adds `--no-bypass-permissions`, restoring native
     checks and relaying approvals through the same choice interface. Both
-    features require the corresponding agent-proxy checkout.
+    features are supplied by the installed thinkeryzu-agent-proxy dependency.
 
     There is deliberately no `resume` field. The agent's session id belongs to
     the session, which adds `--resume` itself; a host that writes one into

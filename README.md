@@ -20,11 +20,30 @@ router without writing a host app. `demo/` is an embedding example; **[API.md](A
 the Python API, the JavaScript API, the WebSocket messages, and what migrating
 an existing app involves.
 
-> **You need `agent-proxy`.** It is the only way r2d2box reaches an agent, and
-> it is a separate tool. This unreleased checkout needs the current agent-proxy
-> checkout with structured-input support:
-> `pip install -e /path/to/agent-proxy` (current checkout). See
-> [Requirements](#requirements).
+## Install
+
+Install from PyPI. The `thinkeryzu-agent-proxy>=0.3.1` dependency is installed
+automatically. Python 3.11 or newer and a signed-in Claude Code or Codex CLI
+are required to run agent turns.
+
+```bash
+# Run the standalone server without managing an environment:
+uvx r2d2box
+
+# Or install a persistent command:
+uv tool install r2d2box
+r2d2box
+
+# Embed the library in a uv project:
+uv add r2d2box
+
+# pip is also supported:
+python -m pip install r2d2box
+```
+
+With a fresh installation, use `uvx r2d2box@0.3.0` or
+`uv tool install r2d2box==0.3.0` to select this release. To update an existing
+tool installation, run `uv tool upgrade r2d2box`.
 
 ```python
 from pathlib import Path
@@ -104,8 +123,7 @@ left work behind.
 
 ## Standalone session server
 
-The CLI is unreleased and is available in the current checkout, not the
-v0.2.0 release artifacts. Install the checkout with `pip install -e .`, then run:
+The packaged CLI serves conversations without writing a host application:
 
 ```bash
 r2d2box
@@ -130,8 +148,8 @@ launched. Transcripts default to `~/.local/share/r2d2box/transcripts` and are
 restored on subsequent launches using the same store. Permission bypass is
 on by default; `--no-bypass-permissions` enables native approval forms.
 Questions are always enabled. Claude is the default agent; the separately
-installed, signed-in agent CLI and a current question-capable `agent-proxy`
-are required to submit prompts.
+installed, signed-in agent CLI is required to submit prompts. The proxy is
+installed automatically with r2d2box.
 
 `--host` defaults to `127.0.0.1`. The server has no authentication and runs
 agents with your local account, so use it on a trusted machine and network.
@@ -149,9 +167,9 @@ one server worker to keep each conversation attached to one process.
 | Needs | Why | Where from |
 |---|---|---|
 | Python ≥ 3.11, `fastapi` ≥ 0.110 | the router you mount | pip, as this package's dependency |
-| `agent-proxy` on `$PATH` | **the only way r2d2box reaches an agent** | [agent-proxy](https://github.com/ThinkerYzu/agent-proxy), `pip install -e /path/to/agent-proxy` (current checkout) |
+| `thinkeryzu-agent-proxy` >= 0.3.1 | supplies the `agent-proxy` executable | installed automatically from [PyPI](https://pypi.org/project/thinkeryzu-agent-proxy/) |
 | `claude` on `$PATH` | what agent-proxy drives | Claude Code 2.1.316 or newer |
-| or `codex` on `$PATH` | the other agent agent-proxy drives, for `AgentConfig(agent="codex")` | the Codex CLI, signed in with ChatGPT; requires the question-capable agent-proxy checkout |
+| or `codex` on `$PATH` | the other agent agent-proxy drives, for `AgentConfig(agent="codex")` | the Codex CLI, signed in with ChatGPT |
 | `uvicorn`, `websockets` | HTTP server and WebSocket transport | installed with r2d2box |
 
 Agent-proxy `v0.2.0` supplies the Codex backend and turn cancellation. For
@@ -167,7 +185,7 @@ boundaries explicitly the same way for both — every message carries a turn id,
 a kind, and the outstanding user/unowned/background counts. Its
 [API.md](https://github.com/ThinkerYzu/agent-proxy/blob/master/API.md) is the
 contract everything here is built on. What runs without any of these binaries
-is the whole test suite: 291 tests pass with none installed, because every
+is the whole test suite: 294 tests pass without an agent CLI, because every
 layer is tested against a stand-in for the one below it.
 
 ## Agent questions
@@ -177,7 +195,7 @@ The box shows choice controls, permitted free text, and Submit answers / Dismiss
 controls, synchronized across tabs and reconnects. Forms render in the
 conversation and scroll with the messages. See
 [Structured questions](API.md#structured-questions) for the protocol.
-This checkout requires the question-capable agent-proxy working checkout;
+The installed proxy dependency supports questions and native approvals;
 Claude needs Claude Code 2.1.316 or newer.
 
 Permission bypass remains enabled by default. To use native permission checks
@@ -211,7 +229,7 @@ await session.attach(my_subscriber)     # anything with `async def send(message)
 await session.submit("why does it crash?")
 ```
 
-To try questions, install the question-capable agent-proxy checkout and run:
+To try questions, run:
 
 ```bash
 .venv/bin/python -m uvicorn demo.app:app --host 127.0.0.1 --port 8790
@@ -234,11 +252,10 @@ questions work in both modes without another setting.
 ## Development
 
 ```bash
-python3 -m venv .venv
-.venv/bin/pip install -e '.[dev]'
-.venv/bin/pytest                             # 282 tests, ~1s; needs no `claude`
+uv sync --locked --extra dev
+uv run --locked pytest                      # needs no `claude`
 node tests/js/run.js                         # the front-end's 74, on their own
-R2D2BOX_RUN_LIVE=1 .venv/bin/pytest -m live  # 16 live tests; needs agent-proxy, claude and codex
+R2D2BOX_RUN_LIVE=1 uv run --locked pytest -m live  # 16 live tests; needs agent-proxy, claude and codex
 ```
 
 Nothing in the default suite needs `claude`, and each layer is tested without
@@ -247,7 +264,7 @@ JSON-lines script, so the read-buffer limit and the shutdown path are the ones
 production uses; `tests/fake_proxy.py` stands in for that subprocess so the
 conversation layer can be driven one message at a time; `FakeHost` there
 overrides `AgentHost.start_proxy` so a whole host — and the router above it —
-runs with no `agent-proxy` installed; `tests/asgi_client.py` drives the mounted
+never launches the real `agent-proxy`; `tests/asgi_client.py` drives the mounted
 app over ASGI in the test's own event loop, so the routing and the `WebSocket`
 object are the production ones with no server and no HTTP client dependency;
 and `tests/js/minidom.js` is the same idea one layer higher, a DOM small enough
@@ -257,43 +274,39 @@ if `node` is missing.
 
 Every push and pull request runs the same two commands on Python 3.11 through
 3.14 — see [`.github/workflows/ci.yml`](.github/workflows/ci.yml). The runner
-has neither `agent-proxy` nor `claude` on it, which is the point: nothing in the
-default suite may come to depend on them. CI runs `node tests/js/run.js`
+installs the proxy dependency but has no agent CLI: the default suite must not
+launch a real agent. CI runs `node tests/js/run.js`
 separately from `pytest` because pytest *skips* the front-end tests when `node`
 is missing, and a silent skip of the whole browser half would leave the suite
 green.
 
 ## Releasing
 
-A release is a tag. Pushing one named `vX.Y.Z` runs
-[`.github/workflows/release.yml`](.github/workflows/release.yml), which refuses
-the tag unless it matches `version` in `pyproject.toml`, runs both suites,
-builds the sdist and wheel, checks the front-end files are really inside the
-wheel, and creates the GitHub Release with both artifacts attached and notes
-read from [RELEASE-NOTES.md](RELEASE-NOTES.md).
+Pushing a `vX.Y.Z` tag runs [the release workflow](.github/workflows/release.yml).
+It checks the tag against package metadata and [RELEASE-NOTES.md](RELEASE-NOTES.md),
+runs the Python and front-end suites, builds with `uv build --no-sources`, and
+validates metadata, the standalone page and all browser assets. Clean wheel,
+source and uv tool installations must pass before upload.
+
+The same validated artifacts go to PyPI using Trusted Publishing and then to
+the GitHub Release. Configure a PyPI publisher for owner `ThinkerYzu`, repository
+`r2d2box`, workflow `release.yml` and environment `pypi` before the first tag.
 
 ```bash
-# bump `version` in pyproject.toml, commit and push it, then:
-git tag v0.2.0 && git push origin v0.2.0
+# Update pyproject.toml and RELEASE-NOTES.md, then:
+uv lock
+uv sync --locked --extra dev
+uv run --locked pytest
+node tests/js/run.js
+uv build --no-sources
+# Commit and push; wait for CI before tagging:
+git tag v0.3.0
+git push origin v0.3.0
 ```
 
-`r2d2box.__version__` comes from the installed metadata, so `pyproject.toml` is
-the only place the number is written and there is nothing for it to drift
-against.
-
-The wheel check is there because the browser half ships as package data rather
-than as Python modules: get that wrong and the wheel installs, imports, and
-mounts perfectly, then serves a 404 for every file the page asks for.
-
-Nothing goes to PyPI — r2d2box does not run without `agent-proxy`, which is
-released on GitHub rather than PyPI for the same reason: it does nothing without
-a `claude` or `codex` binary it cannot declare as a dependency. Install a
-release from its artifact or straight from the tag:
-
-```bash
-pip install https://github.com/ThinkerYzu/r2d2box/releases/download/v0.2.0/r2d2box-0.2.0-py3-none-any.whl
-pip install 'git+https://github.com/ThinkerYzu/r2d2box@v0.2.0'
-```
+`r2d2box.__version__` comes from installed metadata. The lockfile pins the
+development environment; published dependencies use the minimum versions in
+`pyproject.toml`. Only the Claude Code or Codex CLI needs a separate installation.
 
 ## Documentation
 

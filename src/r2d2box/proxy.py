@@ -15,10 +15,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import shutil
+import sysconfig
 from collections.abc import AsyncIterator
 from typing import Any
 
-from .config import DEFAULT_AGENT, AgentConfig, build_argv
+from .config import DEFAULT_AGENT, DEFAULT_PROXY_BIN, AgentConfig, build_argv
 
 _log = logging.getLogger(__name__)
 
@@ -94,6 +96,13 @@ class AgentProxy:
         the exception leaves, so a failed start leaks nothing.
         """
         argv = build_argv(config, resume)
+        if not config.proxy_bin:
+            # uv tool launchers run without activating their environment. Prefer
+            # the dependency beside this Python over an older global executable.
+            argv[0] = (
+                shutil.which(DEFAULT_PROXY_BIN, path=sysconfig.get_path("scripts"))
+                or DEFAULT_PROXY_BIN
+            )
         try:
             process = await asyncio.create_subprocess_exec(
                 *argv,

@@ -1,70 +1,113 @@
 name: Release
 
-# Cut a release by pushing a version tag: `git tag vX.Y.Z && git push origin vX.Y.Z`.
-# The tag must match `version` in pyproject.toml — the job checks and refuses
-# otherwise, before it builds anything.
+# A version tag publishes the validated artifacts to PyPI and GitHub.
 on:
   push:
     tags: [ "v*" ]
 
 permissions:
-  contents: write        # needed to create the GitHub Release
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  UV_VERSION: "0.12.15"
 
 jobs:
-  release:
+  build:
+    name: Build and validate distributions
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
-
-      - name: Install and build tooling
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+      - name: Verify release identity
+        run: python tools/check_release.py "$GITHUB_REF_NAME"
+      - name: Install locked development environment
+        run: uv sync --locked --extra dev --python 3.11
+      - name: Verify installed version and run tests
         run: |
-          python -m pip install --upgrade pip build
-          pip install -e '.[dev]'
-
-      # `r2d2box.__version__` is read from the installed metadata rather than
-      # written out a second time, so this compares the tag against pyproject
-      # and confirms the number survives packaging.
-      - name: Verify the tag matches the package version
-        run: |
-          tag="${GITHUB_REF_NAME#v}"
-          proj="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')"
-          mod="$(python -c 'import r2d2box; print(r2d2box.__version__)')"
-          echo "tag=$tag  pyproject=$proj  __version__=$mod"
-          if [ "$tag" != "$proj" ] || [ "$tag" != "$mod" ]; then
-            echo "::error::tag v$tag must match pyproject ($proj) and r2d2box.__version__ ($mod)"
-            exit 1
-          fi
-
-      - name: Run tests
-        run: |
-          pytest
+          uv run --locked python -c 'import os, r2d2box; assert "v" + r2d2box.__version__ == os.environ["GITHUB_REF_NAME"]'
+          uv run --locked pytest
           node tests/js/run.js
-
-      - name: Build sdist and wheel
-        run: python -m build
-
-      # The browser half ships as package data, not as Python modules, so a
-      # packaging mistake yields a wheel that installs and imports perfectly and
-      # then serves a 404 for every asset the page loads.
-      - name: Verify the front-end is in the wheel
+      - name: Build and check distributions
         run: |
-          wheel="$(ls dist/*.whl)"
-          for f in r2d2box/static/r2d2box.js \
-                   r2d2box/static/r2d2box.css \
-                   r2d2box/static/vendor/marked.min.js \
-                   r2d2box/static/vendor/purify.min.js; do
-            unzip -l "$wheel" | grep -q " $f\$" || {
-              echo "::error::$wheel is missing $f"; exit 1; }
+          uv build --no-sources
+          python tools/check_release.py "$GITHUB_REF_NAME" --dist dist
+          uvx --from twine twine check --strict dist/*
+      - name: Verify clean wheel and source installations
+        run: |
+          for artifact in dist/*.whl dist/*.tar.gz; do
+            target="$(mktemp -d)"
+            uv venv --python 3.11 "$target/venv"
+            uv pip install --python "$target/venv/bin/python" "$artifact" pytest pytest-asyncio
+            "$target/venv/bin/python" tools/smoke_install.py "${GITHUB_REF_NAME#v}"
+            "$target/venv/bin/python" -m pytest
           done
-          echo "$wheel carries the front-end"
+      - name: Verify uv tool installation
+        env:
+          UV_TOOL_DIR: ${{ runner.temp }}/release-tools
+          UV_TOOL_BIN_DIR: ${{ runner.temp }}/release-bin
+        run: |
+          uv tool install --python 3.11 dist/*.whl
+          "$UV_TOOL_BIN_DIR/r2d2box" --version
+          "$UV_TOOL_DIR/r2d2box/bin/python" tools/smoke_install.py "${GITHUB_REF_NAME#v}"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: distributions
+          path: |
+            dist/*.whl
+            dist/*.tar.gz
+          if-no-files-found: error
 
-      # Use the runner's gh CLI (no third-party action / Node runtime) to publish.
-      - name: Create the GitHub Release with artifacts
+  pypi:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/r2d2box/
+    permissions:
+      id-token: write
+    steps:
+      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: distributions
+          path: dist
+      - name: Publish with Trusted Publishing
+        run: uv publish --trusted-publishing always --check-url https://pypi.org/simple/ dist/*
+
+  github:
+    name: Publish GitHub Release
+    needs: pypi
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: distributions
+          path: dist
+      - name: Create GitHub Release with the same distributions
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --title "r2d2box $GITHUB_REF_NAME" --notes-file RELEASE-NOTES.md
+        run: gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --title "r2d2box $GITHUB_REF_NAME" --notes-file RELEASE-NOTES.md

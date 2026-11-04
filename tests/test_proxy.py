@@ -226,3 +226,30 @@ async def test_the_fixture_is_reached_through_the_real_build_argv(scripted_confi
         assert proxy.session_id == "scripted-session-0001"
     finally:
         await proxy.close()
+
+
+@pytest.mark.parametrize("selection", ["environment", "path", "override"])
+async def test_proxy_resolution_without_activating_environment(tmp_path, monkeypatch, selection):
+    """A tool launcher must use its dependency even with a stale global proxy."""
+    import r2d2box.proxy as proxy_module
+
+    scripts = tmp_path / "environment"
+    global_bin = tmp_path / "global"
+    scripts.mkdir()
+    global_bin.mkdir()
+    for directory, identity in [(scripts, "environment"), (global_bin, "path")]:
+        executable = directory / "agent-proxy"
+        executable.write_text(
+            "#!/bin/sh\necho '{\"type\":\"ready\",\"session_id\":\"" + identity + "\"}'\n"
+        )
+        executable.chmod(0o755)
+    monkeypatch.setenv("PATH", str(global_bin))
+    monkeypatch.setattr(proxy_module.sysconfig, "get_path", lambda name: str(scripts))
+    if selection == "path":
+        (scripts / "agent-proxy").unlink()
+    config = AgentConfig(proxy_bin=str(global_bin / "agent-proxy") if selection == "override" else None)
+    proxy = await AgentProxy.start(config)
+    try:
+        assert proxy.session_id == ("environment" if selection == "environment" else "path")
+    finally:
+        await proxy.close()

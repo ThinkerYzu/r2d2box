@@ -42,7 +42,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--append-system-prompt", help="additional system instructions")
     parser.add_argument("--mcp-config", type=Path, help="JSON MCP configuration file (Claude only)")
     parser.add_argument("--allowed-tool", action="append", default=[], help="allowed Claude tool; repeat for multiple tools")
-    parser.add_argument("--proxy-bin", help="agent-proxy executable (default: agent-proxy on PATH)")
+    parser.add_argument("--proxy-bin", help="agent-proxy executable (default: installed dependency, then PATH)")
     parser.add_argument("--proxy-arg", action="append", default=[], help="extra proxy argument; use --proxy-arg=--flag for flags")
     args = parser.parse_args(argv)
     if not 0 <= args.port <= 65535:

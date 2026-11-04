@@ -17,35 +17,33 @@ implementation got them wrong.
 
 ## Install
 
-Not from PyPI — from a release, from a tag, or from a checkout:
+Install from PyPI using uv or pip:
 
 ```bash
-pip install https://github.com/ThinkerYzu/r2d2box/releases/download/v0.2.0/r2d2box-0.2.0-py3-none-any.whl
-pip install 'git+https://github.com/ThinkerYzu/r2d2box@v0.2.0'
-pip install -e /path/to/r2d2box
+uv add r2d2box                    # library in a uv project
+python -m pip install r2d2box     # library in another Python environment
+uvx r2d2box                      # standalone server
+uv tool install r2d2box          # persistent standalone command
 ```
 
-The standalone CLI, always-enabled questions and permission options below are
-unreleased and require installing the current r2d2box checkout, not its
-v0.2.0 artifacts.
+Python 3.11 or newer is required. r2d2box installs
+[`thinkeryzu-agent-proxy>=0.3.1`](https://pypi.org/project/thinkeryzu-agent-proxy/),
+Uvicorn and WebSocket support automatically. At spawn, the default proxy is
+resolved from the current Python environment's scripts directory before PATH,
+so uv tool installations work without activating their environment.
+`AgentConfig(proxy_bin=...)` overrides that selection.
 
-Two things have to be on the machine that r2d2box does not install:
+Install and sign in to an agent CLI separately:
 
-| Needs | Why | Where from |
-|---|---|---|
-| `agent-proxy` on `$PATH` | the only way r2d2box reaches an agent | [agent-proxy](https://github.com/ThinkerYzu/agent-proxy), `pip install -e /path/to/agent-proxy` (current checkout) |
-| `claude` on `$PATH` | what agent-proxy drives | Claude Code 2.1.316 or newer |
-| or `codex` on `$PATH`, signed in with ChatGPT | the other agent agent-proxy drives, for `AgentConfig(agent="codex")` | the Codex CLI; requires the question-capable agent-proxy checkout |
+| Needs | Why |
+|---|---|
+| `claude` on `$PATH`, Claude Code 2.1.316 or newer | the default agent |
+| or `codex` on `$PATH`, signed in with ChatGPT | selected with `AgentConfig(agent="codex")` |
 
-Agent-proxy `v0.2.0` supplies the Codex backend and turn cancellation. For
-Claude, it defaults to `--autocompact 1m` to prevent the optional context-window
-dialog from blocking queued prompts; Claude Code 2.1.316 or newer is required.
-An explicit `--autocompact` in `AgentConfig.extra_args` overrides that default.
-
-**agent-proxy is a separate install**, from its current checkout rather than PyPI, and
-r2d2box does not run end to end without it. Everything below describes the API
-as built and tested; the test
-suite itself needs neither binary.
+For Claude, agent-proxy defaults to `--autocompact 1m` to prevent the optional
+context-window dialog from blocking queued prompts. An explicit `--autocompact`
+in `AgentConfig.extra_args` overrides that default. The default test suite
+uses stand-ins and does not need an agent CLI.
 
 The browser half ships **inside** the Python package and is served by the router
 you mount. There is no build step, no copy step, and nothing is fetched from a
@@ -329,7 +327,7 @@ Every field is optional. A default-constructed `AgentConfig` runs
 | `allowed_tools` | `--allowedTools` |
 | `mcp_config` | `--mcp-config`, with the dict serialized to JSON |
 | `extra_args` | appended verbatim |
-| `proxy_bin` | the binary to run; defaults to `agent-proxy` on `$PATH` |
+| `proxy_bin` | the binary to run; defaults to the installed dependency, then `agent-proxy` on `$PATH` |
 | `bypass_permissions` | defaults to true; false adds `--no-bypass-permissions`. `--user-input` is always sent |
 | `agent` | `--agent`, first: `"claude"` or `"codex"`. `None`, the default, passes no flag and runs claude |
 
@@ -378,8 +376,7 @@ counts stay at 0. A turn codex reports as failed carries codex's reason in
 Questions are always enabled for either backend: every launch passes
 `--user-input`. There is no `AgentConfig.user_input` field or demo question toggle.
 The former `AgentConfig(user_input=True)` setting should be removed from callers.
-This checkout requires agent-proxy's **working checkout with `--user-input`**,
-an unreleased extension absent from v0.2.0, even for the default configuration.
+Questions are supported by the installed `thinkeryzu-agent-proxy>=0.3.1` dependency.
 Claude requires Claude Code **2.1.316 or newer**. Codex input support is
 validated upstream on 0.163.0.
 
@@ -433,7 +430,7 @@ their upstream behavior; secret input masking is a display feature.
 `AgentConfig(bypass_permissions=True)` is the default and keeps agent-proxy's
 existing permission bypass. Set `bypass_permissions=False` to pass
 `--no-bypass-permissions` before host arguments, including on resume. This
-requires the upstream checkout with that flag. It does not change saved agent
+is supported by the installed proxy dependency. It does not change saved agent
 settings, and does not require a different question setting.
 
 Claude uses native permission checks (manual mode unless a non-bypass mode is

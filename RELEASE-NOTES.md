@@ -1,60 +1,47 @@
-# r2d2box v0.2.0
+# r2d2box v0.3.0
 
-This release adds Codex as a second agent and a Stop button for queued or
-running turns. It also fixes idle eviction and composer behavior when agents
-leave background work running.
+This release adds a standalone session server, structured agent questions and
+native permission approval forms. It also makes r2d2box installable from PyPI
+with pip or uv, including its agent-proxy dependency.
 
-## Compatibility and installation
-
-- Install **agent-proxy v0.2.0 or newer** separately. It supplies Codex,
-  cancellation, and the default `--autocompact 1m` launch setting that prevents
-  Claude's optional context-window dialog from blocking queued prompts.
-- With agent-proxy v0.2.0's default launch settings, Claude Code **2.1.221 or
-  newer** is required. Explicit autocompact overrides are preserved.
-- Codex requires the Codex CLI signed in with ChatGPT. Configure it with
-  `AgentConfig(agent="codex")`. `allowed_tools` and `mcp_config` are refused
-  for Codex; see [API.md](https://github.com/ThinkerYzu/r2d2box/blob/v0.2.0/API.md#running-codex) for accepted configuration.
-- The session attribute `claude_session_id` is renamed to `agent_session_id`;
-  `Session.agent` identifies the backend that owns it. A backend change starts
-  a fresh agent conversation while preserving the visible transcript.
-- Python 3.11 or newer remains required. The browser assets ship in the wheel.
+## Install and run
 
 ```bash
-pip install 'git+https://github.com/ThinkerYzu/agent-proxy@v0.2.0'
-pip install 'git+https://github.com/ThinkerYzu/r2d2box@v0.2.0'
+uvx r2d2box@0.3.0
+# Or install a persistent command:
+uv tool install r2d2box==0.3.0
+# Embed the library in a project:
+uv add r2d2box==0.3.0
+# pip is also supported:
+python -m pip install r2d2box==0.3.0
 ```
 
-## New capabilities
+Open http://127.0.0.1:8790/ for the standalone server. Python 3.11 or newer is
+required. `thinkeryzu-agent-proxy>=0.3.1` is installed automatically. Install
+and sign in to Claude Code (2.1.316 or newer) or Codex separately.
 
-- `AgentConfig.agent` selects Claude or Codex behind the same conversation
-  stream, router, transcript store and chat box.
-- `Session.cancel(turn_id)` and the WebSocket `cancel` command withdraw a
-  queued turn or request interruption of a running user turn. `turn_cancel`
-  broadcasts the stopping state to every attached client; `turn_end` reports
-  the final outcome, including `cancelled`.
-- Send and Stop share one button slot. Stop appears while a user turn can be
-  cancelled; otherwise Send shows the composer's current availability.
-- Background tasks display their commands and output in collapsible blocks,
-  open while running and folded when finished. Codex tool headers summarize
-  file changes, MCP calls and searches.
+## Changes since v0.2.0
 
-## Fixes
-
-- Idle eviction spares sessions with outstanding background commands,
-  subagents or monitors under the configured caps. Monitors have no deadline
-  by default.
-- A persistent monitor no longer disables the composer or causes indefinite
-  status polling. Task kinds are included in attach and status snapshots.
-- Queued turns can be stopped before they start, and cancellation state is
-  shared consistently across tabs.
+- The `r2d2box` command and `python -m r2d2box` serve a packaged session page,
+  persistent transcripts, REST and WebSocket endpoints. Options configure the
+  bind address, agent, working directory, transcript store and proxy arguments.
+- Questions are always enabled. Choice and text forms share answer state across
+  tabs and reconnects. Remove any former `AgentConfig(user_input=...)` argument.
+- Permission bypass remains enabled by default. Set
+  `AgentConfig(bypass_permissions=False)` or use `--no-bypass-permissions` for
+  native approvals. Forms display operation details and choices without
+  preselecting a decision. Dismissing an approval denies it.
+- Question and approval forms scroll in the conversation, with wrapping for
+  long content. Chat links use the panel's light blue user accent.
+- Proxy spawning prefers the dependency in the current Python environment,
+  allowing uv tool launchers to work without environment activation.
+  Explicit `proxy_bin` overrides still take precedence.
+- Development and CI use a committed uv lockfile. The release workflow validates
+  wheel, source and uv tool installations before publishing the same artifacts
+  to PyPI and GitHub using Trusted Publishing.
 
 ## Validation
 
-Validated locally on 2026-10-20 against agent-proxy v0.2.0:
-
-- 260 default tests passed, including 58 front-end tests.
-- All 10 live tests passed with Claude Code 2.1.304 and Codex CLI 0.163.0.
-
-The release workflow checks the tag against package metadata, runs both test
-suites, builds the wheel and source distribution, and verifies all four browser
-assets are present before publishing.
+Release checks cover the default Python and front-end suites, distribution
+metadata, packaged page/assets, clean wheel/source installs and uv tool
+installation. Real agent integration remains opt-in through `R2D2BOX_RUN_LIVE=1`.

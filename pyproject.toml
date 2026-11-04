@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "r2d2box"
-version = "0.2.0"
+version = "0.3.0"
 description = "An embeddable chat box for AI agents: a mountable agent host and the front-end panel that drives it."
 requires-python = ">=3.11"
 readme = "README.md"
@@ -15,10 +15,16 @@ license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Kui-Feng Lee" }]
 dependencies = [
+    "thinkeryzu-agent-proxy>=0.3.1",
     "fastapi>=0.110",
     "uvicorn>=0.29",
     "websockets>=12",
 ]
+
+[project.urls]
+Source = "https://github.com/ThinkerYzu/r2d2box"
+Documentation = "https://github.com/ThinkerYzu/r2d2box/blob/master/API.md"
+Issues = "https://github.com/ThinkerYzu/r2d2box/issues"
 
 [project.scripts]
 r2d2box = "r2d2box.cli:main"
